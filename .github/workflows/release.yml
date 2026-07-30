@@ -117,7 +117,7 @@ jobs:
           Compress-Archive -Path dist/package/* -DestinationPath "dist/agentfreeze-${{ matrix.asset }}.zip"
           Remove-Item -Recurse -Force dist/package
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: "dist/*"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -148,7 +148,7 @@ jobs:
           cd dist
           sha256sum agentfreeze-* install.sh > SHA256SUMS
       - name: Attest checksums and installer
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             dist/SHA256SUMS
