@@ -21,7 +21,7 @@
     },
     "generatedBy": {
       "type": "string",
-      "pattern": "^agentfreeze [0-9]+\\.[0-9]+\\.[0-9]+"
+      "pattern": "^agentfreeze [0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
     },
     "scanScopes": {
       "type": "array",

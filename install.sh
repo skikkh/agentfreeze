@@ -74,6 +74,7 @@ cleanup() {
     rm -f "$staging_binary"
   fi
   if [ -n "$install_lock" ]; then
+    rm -f "$install_lock/pid"
     rmdir "$install_lock" 2>/dev/null || true
   fi
 }
@@ -89,7 +90,31 @@ if [ -d "${binary_directory}/agentfreeze" ]; then
 fi
 lock_candidate="${binary_directory}/.agentfreeze-install.lock"
 if ! mkdir "$lock_candidate"; then
-  echo "error: another AgentFreeze installation is using ${binary_directory}" >&2
+  if [ ! -d "$lock_candidate" ] || [ ! -f "$lock_candidate/pid" ]; then
+    echo "error: cannot verify the owner of installation lock ${lock_candidate}" >&2
+    echo "       after confirming no installer is running, remove it with: rmdir ${lock_candidate}" >&2
+    exit 2
+  fi
+  lock_owner="$(sed -n '1p' "$lock_candidate/pid")"
+  case "$lock_owner" in
+    "" | *[!0-9]*)
+      echo "error: invalid installation lock owner in ${lock_candidate}/pid" >&2
+      exit 2
+      ;;
+  esac
+  if kill -0 "$lock_owner" 2>/dev/null; then
+    echo "error: AgentFreeze installer process ${lock_owner} is already using ${binary_directory}" >&2
+    exit 2
+  fi
+  rm -f "$lock_candidate/pid"
+  if ! rmdir "$lock_candidate" || ! mkdir "$lock_candidate"; then
+    echo "error: installation lock changed while recovering ${lock_candidate}" >&2
+    exit 2
+  fi
+fi
+if ! printf '%s\n' "$$" >"$lock_candidate/pid"; then
+  rmdir "$lock_candidate" 2>/dev/null || true
+  echo "error: cannot record installation lock owner in ${lock_candidate}" >&2
   exit 2
 fi
 install_lock="$lock_candidate"

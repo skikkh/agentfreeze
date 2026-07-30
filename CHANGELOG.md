@@ -30,6 +30,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Release tags bound to the Cargo version and current `main`, with release-time format, lint, test,
   and dependency-audit gates.
 - Recoverable draft publication and an atomic installer lock for concurrent install attempts.
+- Exact release-asset allowlisting before draft publication, stale installer-lock recovery, and
+  strict lockfile reader parity with the published JSON Schema.
 
 [Unreleased]: https://github.com/skikkh/agentfreeze/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/skikkh/agentfreeze/releases/tag/v0.1.0

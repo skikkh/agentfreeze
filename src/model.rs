@@ -78,7 +78,7 @@ impl std::fmt::Display for ExtensionKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Entry {
     pub id: String,
     pub ecosystem: Ecosystem,
@@ -97,7 +97,7 @@ pub struct Entry {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Lockfile {
     #[serde(rename = "$schema")]
     pub schema: String,

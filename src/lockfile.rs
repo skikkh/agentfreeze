@@ -200,6 +200,7 @@ pub fn validate_lockfile(lockfile: &Lockfile) -> Result<()> {
             LOCKFILE_VERSION
         );
     }
+    validate_generated_by(&lockfile.generated_by)?;
     if lockfile.scan_scopes.as_slice() != [EntryScope::User] {
         bail!("AgentFreeze v1 lockfiles must use scanScopes [\"user\"]");
     }
@@ -214,6 +215,17 @@ pub fn validate_lockfile(lockfile: &Lockfile) -> Result<()> {
             || entry.source.trim().is_empty()
         {
             bail!("lockfile entries require non-empty id, name, and source");
+        }
+        if entry
+            .version
+            .as_ref()
+            .is_some_and(|version| version.trim().is_empty())
+            || entry
+                .revision
+                .as_ref()
+                .is_some_and(|revision| revision.trim().is_empty())
+        {
+            bail!("lockfile entry version and revision must be non-empty when present");
         }
         if entry.source != "$HOME" && !entry.source.starts_with("$HOME/") {
             bail!("AgentFreeze v1 user entry sources must be anchored under $HOME");
@@ -231,6 +243,45 @@ pub fn validate_lockfile(lockfile: &Lockfile) -> Result<()> {
         previous = Some(entry.id.as_str());
     }
     Ok(())
+}
+
+fn validate_generated_by(generated_by: &str) -> Result<()> {
+    let Some(version) = generated_by.strip_prefix("agentfreeze ") else {
+        bail!("generatedBy must identify an agentfreeze semantic version");
+    };
+    let (without_build, build) = version
+        .split_once('+')
+        .map_or((version, None), |(core, build)| (core, Some(build)));
+    if build.is_some_and(|value| !valid_semver_identifiers(value)) {
+        bail!("generatedBy must identify an agentfreeze semantic version");
+    }
+    let (core, prerelease) = without_build
+        .split_once('-')
+        .map_or((without_build, None), |(core, prerelease)| {
+            (core, Some(prerelease))
+        });
+    if prerelease.is_some_and(|value| !valid_semver_identifiers(value)) {
+        bail!("generatedBy must identify an agentfreeze semantic version");
+    }
+    let components = core.split('.').collect::<Vec<_>>();
+    if components.len() != 3
+        || components.iter().any(|component| {
+            component.is_empty() || !component.bytes().all(|byte| byte.is_ascii_digit())
+        })
+    {
+        bail!("generatedBy must identify an agentfreeze semantic version");
+    }
+    Ok(())
+}
+
+fn valid_semver_identifiers(value: &str) -> bool {
+    !value.is_empty()
+        && value.split('.').all(|identifier| {
+            !identifier.is_empty()
+                && identifier
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
 }
 
 fn validate_digest(digest: &str) -> Result<()> {
@@ -315,6 +366,8 @@ pub fn compare(lockfile: &Lockfile, observed: &[Entry], allow_untracked: bool) -
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use tempfile::tempdir;
 
     use super::{
@@ -379,6 +432,77 @@ mod tests {
         let error = write_lockfile(&path, &build_lockfile(vec![invalid]))
             .expect_err("metadata mismatch must fail");
         assert!(error.to_string().contains("entry id does not match"));
+    }
+
+    #[test]
+    fn lockfile_reader_rejects_unknown_fields() {
+        for target in ["top-level", "entry"] {
+            let fixture = tempdir().expect("tempdir");
+            let path = fixture.path().join("agentfreeze.lock");
+            let mut value =
+                serde_json::to_value(build_lockfile(vec![entry("strict", 'a')])).expect("JSON");
+            if target == "top-level" {
+                value
+                    .as_object_mut()
+                    .expect("lockfile object")
+                    .insert("unexpected".to_owned(), serde_json::json!(true));
+            } else {
+                value["entries"][0]
+                    .as_object_mut()
+                    .expect("entry object")
+                    .insert("unexpected".to_owned(), serde_json::json!(true));
+            }
+            fs::write(&path, serde_json::to_vec(&value).expect("serialize"))
+                .expect("write fixture");
+
+            let error = load_lockfile(&path).expect_err("unknown fields must fail");
+            assert!(
+                error.to_string().contains("invalid JSON"),
+                "{target}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn lockfile_reader_enforces_generated_by_and_optional_string_invariants() {
+        let fixture = tempdir().expect("tempdir");
+        let path = fixture.path().join("agentfreeze.lock");
+        let mut prerelease = build_lockfile(vec![entry("strict", 'a')]);
+        prerelease.generated_by = "agentfreeze 1.2.3-alpha.1+build.5".to_owned();
+        fs::write(
+            &path,
+            serde_json::to_vec(&prerelease).expect("serialize prerelease fixture"),
+        )
+        .expect("write prerelease fixture");
+        load_lockfile(&path).expect("valid semantic version must load");
+
+        let mut lockfile = build_lockfile(vec![entry("strict", 'a')]);
+        lockfile.generated_by = "other-tool 1.2.3".to_owned();
+        fs::write(
+            &path,
+            serde_json::to_vec(&lockfile).expect("serialize generatedBy fixture"),
+        )
+        .expect("write generatedBy fixture");
+        let generated_by_error = load_lockfile(&path).expect_err("invalid generatedBy must fail");
+        assert!(
+            generated_by_error
+                .to_string()
+                .contains("generatedBy must identify")
+        );
+
+        let mut lockfile = build_lockfile(vec![entry("strict", 'a')]);
+        lockfile.entries[0].version = Some(String::new());
+        fs::write(
+            &path,
+            serde_json::to_vec(&lockfile).expect("serialize empty version fixture"),
+        )
+        .expect("write empty version fixture");
+        let version_error = load_lockfile(&path).expect_err("empty version must fail");
+        assert!(
+            version_error
+                .to_string()
+                .contains("version and revision must be non-empty")
+        );
     }
 
     #[test]

@@ -127,7 +127,7 @@ fixtures upstream. If gate 4 fails, stop the standards bid even if individual us
 
 ## Implementation evidence at decision time
 
-- Rust 1.85 tests: 14 unit tests and 19 CLI integration tests passed.
+- Rust 1.85 tests: 16 unit tests and 19 CLI integration tests passed.
 - Rust 1.85 clippy with warnings denied passed.
 - A release build scanned one maintainer machine in 6.92 seconds.
 - The observed profile contained 79 entries: 34 skills, 26 plugins, and 19 MCP servers.
