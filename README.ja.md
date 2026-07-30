@@ -24,6 +24,8 @@ Watching 79 user extensions every 60s — Ctrl-C to stop
 
 ## 30秒で試す
 
+GitHub CLIの`gh attestation verify`を利用できるmacOS / Linux:
+
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf \
   https://github.com/skikkh/agentfreeze/releases/latest/download/install.sh | sh
@@ -34,8 +36,10 @@ agentfreeze verify
 agentfreeze watch
 ```
 
-installerはSHA-256を必ず確認し、対応するGitHub CLIがあればbuild provenanceも確認します。
-installer自体の検証手順は[English README](README.md#install)にあります。
+installerはSHA-256を必ず確認し、既定ではGitHub CLIを使ってrepository・release workflow・
+tag・commit・GitHub-hosted runnerまで拘束したbuild provenance検証も必須にします。
+`gh`なしでsame-origin checksumだけを明示的に受容する手順とinstaller自体の検証手順は
+[English README](README.md#install)にあります。
 
 `freeze`は対応済みのユーザー領域だけを固定します。現在のリポジトリは
 `agentfreeze scan --scope workspace`でinventoryできますが、project-localな認可にはSeal、
@@ -51,7 +55,8 @@ AgentFreezeは「安全判定スキャナ」ではありません。「今ある
 - `.git`を含む隠しファイルも除外せずhash
 - MCPの生設定は保存せず、秘密らしいenv/header/query key・CLI flag・URL credentialをredact
 - tenant/region/modeなど非秘密のrouting値はhashに含め、接続先の取り違えを検知
-- symlink先は辿らずリンク文字列をhashし、root symlink・読めないファイル・壊れた設定は失敗
+- symlink先は辿らずリンク文字列をhashし、root symlink・読めないファイル・壊れた設定・
+  home/workspace境界外へ解決する既知設定は失敗
 - `verify`はclean=0、drift=1、実行エラー=2
 
 lockfileも変更できる攻撃者、初回導入時から悪性の拡張、実行時だけ変わる挙動は防げません。
@@ -74,9 +79,9 @@ MCPサーバーを起動せずに証拠化できるか、という一点です�
 ## 現在地
 
 v0.1ではinventory・freeze・verify・間隔指定のpolling monitorを提供します。これは
-2週間の需要検証であり、標準化・事業化・買収可能性は未検証です。署名付きprovenance、
+2週間の需要検証であり、標準化・事業化・買収可能性は未検証です。拡張自体のsigned origin、
 native filesystem event、隔離環境での発火検証は未実装です。実装済みと誤解させる安全主張は
-しません。
+しません。release assetにはGitHub build provenanceを付けます。
 
 ライセンスはMITです。仕様変更と中立運営の方針は
 [GOVERNANCE.md](docs/governance.md)にあります。

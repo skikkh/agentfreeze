@@ -124,7 +124,12 @@ fn discover_skill_root(
     if !path_exists(root)? {
         return Ok(());
     }
-    let mut children = fs::read_dir(root)
+    let boundary = match scope {
+        EntryScope::User => home,
+        EntryScope::Workspace => workspace,
+    };
+    let resolved_root = resolve_within_boundary(root, boundary, "skill discovery root")?;
+    let mut children = fs::read_dir(&resolved_root)
         .with_context(|| format!("cannot list skill root {}", root.display()))?
         .collect::<std::io::Result<Vec<_>>>()
         .with_context(|| format!("cannot list skill root {}", root.display()))?;
@@ -214,8 +219,13 @@ fn discover_manifest_plugins(
     if !path_exists(root)? {
         return Ok(());
     }
+    let boundary = match scope {
+        EntryScope::User => home,
+        EntryScope::Workspace => workspace,
+    };
+    let resolved_root = resolve_within_boundary(root, boundary, "plugin discovery root")?;
     let mut manifests = Vec::new();
-    find_plugin_manifests(root, 0, max_depth, &mut manifests)?;
+    find_plugin_manifests(&resolved_root, &resolved_root, 0, max_depth, &mut manifests)?;
     manifests.sort();
 
     for manifest in manifests {
@@ -249,6 +259,7 @@ fn discover_manifest_plugins(
 }
 
 fn find_plugin_manifests(
+    root: &Path,
     directory: &Path,
     depth: usize,
     max_depth: usize,
@@ -268,12 +279,22 @@ fn find_plugin_manifests(
         let metadata = fs::symlink_metadata(&path)
             .with_context(|| format!("cannot inspect {}", path.display()))?;
         if metadata.file_type().is_symlink() {
+            let target = path.canonicalize().with_context(|| {
+                format!("cannot resolve plugin discovery symlink {}", path.display())
+            })?;
+            if !target.starts_with(root) {
+                bail!(
+                    "plugin discovery symlink escapes its root: {} -> {}",
+                    path.display(),
+                    target.display()
+                );
+            }
             continue;
         }
         if metadata.is_file() && is_plugin_manifest(&path) {
             manifests.push(path);
         } else if metadata.is_dir() {
-            find_plugin_manifests(&path, depth + 1, max_depth, manifests)?;
+            find_plugin_manifests(root, &path, depth + 1, max_depth, manifests)?;
         }
     }
     Ok(())
@@ -325,7 +346,8 @@ fn discover_claude_installed_plugins(
     if !path_exists(&registry)? {
         return Ok(());
     }
-    let bytes = fs::read(&registry)
+    let resolved_registry = resolve_within_boundary(&registry, home, "Claude plugin registry")?;
+    let bytes = fs::read(&resolved_registry)
         .with_context(|| format!("cannot read Claude plugin registry {}", registry.display()))?;
     let value: Value = serde_json::from_slice(&bytes)
         .with_context(|| format!("invalid JSON in {}", registry.display()))?;
@@ -507,7 +529,8 @@ fn discover_claude_project_mcp(
     if !path_exists(&path)? {
         return Ok(());
     }
-    let bytes = fs::read(&path).with_context(|| format!("cannot read {}", path.display()))?;
+    let resolved = resolve_within_boundary(&path, home, "Claude project MCP config")?;
+    let bytes = fs::read(&resolved).with_context(|| format!("cannot read {}", path.display()))?;
     let value: Value = serde_json::from_slice(&bytes)
         .with_context(|| format!("invalid JSON in {}", path.display()))?;
     let Some(projects) = value.get("projects").and_then(Value::as_object) else {
@@ -545,7 +568,12 @@ fn discover_json_mcp(
     if !path_exists(path)? {
         return Ok(());
     }
-    let bytes = fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
+    let boundary = match scope {
+        EntryScope::User => home,
+        EntryScope::Workspace => workspace,
+    };
+    let resolved = resolve_within_boundary(path, boundary, "MCP JSON config")?;
+    let bytes = fs::read(&resolved).with_context(|| format!("cannot read {}", path.display()))?;
     let value: Value = serde_json::from_slice(&bytes)
         .with_context(|| format!("invalid JSON in {}", path.display()))?;
     for key in keys {
@@ -570,8 +598,13 @@ fn discover_toml_mcp(
     if !path_exists(path)? {
         return Ok(());
     }
+    let boundary = match scope {
+        EntryScope::User => home,
+        EntryScope::Workspace => workspace,
+    };
+    let resolved = resolve_within_boundary(path, boundary, "MCP TOML config")?;
     let text =
-        fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+        fs::read_to_string(&resolved).with_context(|| format!("cannot read {}", path.display()))?;
     let value: toml::Value =
         toml::from_str(&text).with_context(|| format!("invalid TOML in {}", path.display()))?;
     let Some(servers) = value.get("mcp_servers").and_then(toml::Value::as_table) else {
@@ -794,6 +827,20 @@ fn path_exists(path: &Path) -> Result<bool> {
     }
 }
 
+fn resolve_within_boundary(path: &Path, boundary: &Path, label: &str) -> Result<PathBuf> {
+    let resolved = path
+        .canonicalize()
+        .with_context(|| format!("cannot resolve {label} {}", path.display()))?;
+    if !resolved.starts_with(boundary) {
+        bail!(
+            "{label} escapes its boundary: {} -> {}",
+            path.display(),
+            resolved.display()
+        );
+    }
+    Ok(resolved)
+}
+
 fn skill_marker_exists(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => Ok(metadata.is_file() || metadata.file_type().is_symlink()),
@@ -909,5 +956,34 @@ mod tests {
         let error = scan(&ScanOptions::new(workspace, home, ScanScope::User))
             .expect_err("escaped user extension must fail");
         assert!(error.to_string().contains("escapes its home boundary"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn internal_plugin_alias_is_covered_by_its_physical_target() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = tempdir().expect("tempdir");
+        let home = fixture.path().join("home");
+        let workspace = fixture.path().join("workspace");
+        let version = home.join(".codex/plugins/cache/example/1.0.0");
+        fs::create_dir_all(version.join(".codex-plugin")).expect("plugin manifest parent");
+        fs::create_dir_all(&workspace).expect("workspace");
+        fs::write(
+            version.join(".codex-plugin/plugin.json"),
+            r#"{"name":"example","version":"1.0.0"}"#,
+        )
+        .expect("plugin manifest");
+        symlink(
+            "1.0.0",
+            version.parent().expect("version parent").join("latest"),
+        )
+        .expect("internal alias");
+
+        let entries = scan(&ScanOptions::new(workspace, home, ScanScope::User))
+            .expect("internal aliases must not hide the physical plugin");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "example");
+        assert!(entries[0].source.ends_with("/example/1.0.0"));
     }
 }

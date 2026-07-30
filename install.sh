@@ -4,6 +4,7 @@ set -eu
 repository="skikkh/agentfreeze"
 release_version="latest"
 binary_directory="${AGENTFREEZE_BIN_DIR:-${HOME}/.local/bin}"
+allow_checksum_only=false
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -22,6 +23,10 @@ while [ "$#" -gt 0 ]; do
       fi
       binary_directory="$2"
       shift 2
+      ;;
+    --allow-checksum-only)
+      allow_checksum_only=true
+      shift
       ;;
     *)
       echo "error: unknown option $1" >&2
@@ -103,12 +108,58 @@ else
 fi
 
 if command -v gh >/dev/null 2>&1 && gh attestation verify --help >/dev/null 2>&1; then
+  if [ "$release_version" = "latest" ]; then
+    resolved_tag="$(gh api "repos/${repository}/releases/latest" --jq ".tag_name")"
+  else
+    resolved_tag="$release_version"
+  fi
+  case "$resolved_tag" in
+    v[0-9]*)
+      case "$resolved_tag" in
+        *[!A-Za-z0-9._-]*)
+          echo "error: unsafe release tag ${resolved_tag}" >&2
+          exit 2
+          ;;
+      esac
+      ;;
+    *)
+      echo "error: release tag must begin with v and a digit: ${resolved_tag}" >&2
+      exit 2
+      ;;
+  esac
+
+  ref_type="$(gh api "repos/${repository}/git/ref/tags/${resolved_tag}" --jq ".object.type")"
+  ref_digest="$(gh api "repos/${repository}/git/ref/tags/${resolved_tag}" --jq ".object.sha")"
+  if [ "$ref_type" = "tag" ]; then
+    target_type="$(gh api "repos/${repository}/git/tags/${ref_digest}" --jq ".object.type")"
+    source_digest="$(gh api "repos/${repository}/git/tags/${ref_digest}" --jq ".object.sha")"
+    if [ "$target_type" != "commit" ]; then
+      echo "error: release tag ${resolved_tag} does not resolve directly to a commit" >&2
+      exit 2
+    fi
+  elif [ "$ref_type" = "commit" ]; then
+    source_digest="$ref_digest"
+  else
+    echo "error: release tag ${resolved_tag} has unsupported target type ${ref_type}" >&2
+    exit 2
+  fi
+
   gh attestation verify \
     "${temporary_directory}/${archive}" \
-    --repo "$repository" >/dev/null
-  echo "Verified GitHub build provenance for ${archive}"
+    --repo "$repository" \
+    --signer-workflow "github.com/${repository}/.github/workflows/release.yml" \
+    --signer-digest "$source_digest" \
+    --source-ref "refs/tags/${resolved_tag}" \
+    --source-digest "$source_digest" \
+    --deny-self-hosted-runners >/dev/null
+  echo "Verified GitHub build provenance for ${archive} from ${resolved_tag}@${source_digest}"
 else
-  echo "warning: gh attestation verification is unavailable; verified checksum only" >&2
+  if [ "$allow_checksum_only" != "true" ]; then
+    echo "error: GitHub CLI with attestation support is required for provenance verification" >&2
+    echo "       install gh, or explicitly accept same-origin checksum trust with --allow-checksum-only" >&2
+    exit 2
+  fi
+  echo "warning: provenance was not verified; explicit checksum-only mode is active" >&2
 fi
 
 tar -xzf "${temporary_directory}/${archive}" -C "$temporary_directory"

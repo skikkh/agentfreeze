@@ -23,7 +23,8 @@ header, CLI-flag, and URL-query positions plus URL credentials are redacted befo
 non-secret routing values remain covered. An unrecognized low-entropy secret can still influence
 the digest and may be vulnerable to offline guessing when the surrounding definition is known;
 the sanitized definition itself is not serialized. Internal symlinks are hashed without traversal;
-symlinked extension roots and unreadable sources fail closed.
+symlinked extension roots, unreadable sources, broken discovery links, and known config paths that
+resolve outside their home/workspace boundary fail closed.
 
 ## Existing standard relationship
 

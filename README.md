@@ -51,7 +51,7 @@ narrower, testable question:
 
 ## Install
 
-macOS and Linux:
+macOS and Linux (requires GitHub CLI with `gh attestation verify`):
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf \
@@ -61,21 +61,39 @@ curl --proto '=https' --tlsv1.2 -LsSf \
 From source:
 
 ```sh
-cargo install --git https://github.com/skikkh/agentfreeze --locked
+cargo install --git https://github.com/skikkh/agentfreeze --tag v0.1.0 --locked
 ```
 
 Windows users can download the `.zip` from
 [GitHub Releases](https://github.com/skikkh/agentfreeze/releases).
 
-Release binaries include SHA-256 checksums and GitHub build-provenance attestations. The installer
-also verifies the binary attestation when GitHub CLI (`gh`) is available; otherwise it prints a
-warning and verifies the release checksum only. To verify the installer before running it:
+Release binaries include SHA-256 checksums and GitHub build-provenance attestations. By default,
+the installer requires GitHub CLI (`gh`) and binds verification to this repository, the release
+workflow, the resolved tag and commit, and GitHub-hosted runners. To explicitly accept only the
+same-origin release checksum when `gh` is unavailable:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/skikkh/agentfreeze/releases/latest/download/install.sh |
+  sh -s -- --allow-checksum-only
+```
+
+To verify the v0.1.0 installer before running it:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fLsS \
-  https://github.com/skikkh/agentfreeze/releases/latest/download/install.sh \
+  https://github.com/skikkh/agentfreeze/releases/download/v0.1.0/install.sh \
   -o install.sh
-gh attestation verify install.sh --repo skikkh/agentfreeze
+release_sha="$(git ls-remote https://github.com/skikkh/agentfreeze \
+  'refs/tags/v0.1.0^{}' | cut -f1)"
+test "${#release_sha}" -eq 40
+gh attestation verify install.sh \
+  --repo skikkh/agentfreeze \
+  --signer-workflow github.com/skikkh/agentfreeze/.github/workflows/release.yml \
+  --signer-digest "$release_sha" \
+  --source-ref refs/tags/v0.1.0 \
+  --source-digest "$release_sha" \
+  --deny-self-hosted-runners
 sh install.sh
 ```
 
@@ -171,7 +189,7 @@ AgentFreeze v1 refuses workspace entries in its lockfile. See the
 - sorted inventory and deterministic JSON output
 - no symlink traversal; internal link targets are hashed as text and extension-root links fail
 - no network requests during scan, freeze, verify, or watch
-- unreadable or malformed configured sources fail the operation
+- unreadable, malformed, broken, or boundary-escaping configured sources fail the operation
 - lockfile paths are anchored instead of exposing the local username
 
 AgentFreeze cannot protect a lockfile an attacker can also modify, judge first-install safety,

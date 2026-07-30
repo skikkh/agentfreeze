@@ -20,6 +20,7 @@ a clean result is not a safety verdict.
 - payload material is added under a normally ignored directory such as `.git`
 - a config parser encounters malformed data and would otherwise omit inventory
 - a filesystem error would otherwise produce a partial “clean” result
+- a known config or plugin-discovery path resolves outside its declared home/workspace boundary
 - an internal symlink is retargeted after the baseline
 - a lockfile uses an unsupported schema or malformed digest
 
@@ -71,6 +72,6 @@ authentication is required.
 
 ## Safe failure behavior
 
-Unreadable sources, malformed known config files, unsupported filesystem entries, invalid
-lockfiles, and sources changing size during hashing return exit code `2`. CI and hooks must treat
-both `1` and `2` as failures.
+Unreadable sources, malformed known config files, broken or boundary-escaping discovery links,
+unsupported filesystem entries, invalid lockfiles, and sources changing size during hashing return
+exit code `2`. CI and hooks must treat both `1` and `2` as failures.
