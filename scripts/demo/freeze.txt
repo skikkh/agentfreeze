@@ -1,0 +1,7 @@
+$ agentfreeze freeze
+
+Frozen 79 extensions in agentfreeze.lock
+Lockfile sha256:8d6f...f27a
+
+$ agentfreeze verify
+Verified 79 extensions — no drift

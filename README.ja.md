@@ -1,0 +1,79 @@
+# AgentFreeze
+
+**エージェントの依存管理外で、何が変わったかを見る。**
+
+AgentFreezeはローカル専用・非実行型の証拠収集ツールです。Claude、Codex、Cursor、
+Gemini、共通agentディレクトリの対応済みSkills・プラグイン・MCP定義を、起動せずに
+検出します。現在の状態を`agentfreeze.lock`へ保存し、追加・削除・内容変更を見つけます。
+
+```console
+$ agentfreeze scan
+Found 79 extensions: 34 skills, 26 plugins, 19 MCP servers
+
+$ agentfreeze freeze
+Frozen 79 extensions in agentfreeze.lock
+
+$ agentfreeze verify
+Verified 79 extensions — no drift
+
+$ agentfreeze watch
+Watching 79 user extensions every 60s — Ctrl-C to stop
+```
+
+この`79`はメンテナ1名の実測値であり、平均値ではありません。
+
+## 30秒で試す
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://raw.githubusercontent.com/skikkh/agentfreeze/main/install.sh | sh
+
+agentfreeze scan
+agentfreeze freeze
+agentfreeze verify
+agentfreeze watch
+```
+
+`freeze`は対応済みのユーザー領域だけを固定します。現在のリポジトリは
+`agentfreeze scan --scope workspace`でinventoryできますが、project-localな認可にはSeal、
+宣言済みのproject/global依存管理にはMicrosoft APMを使います。
+
+## 何を保証するか
+
+AgentFreezeは「安全判定スキャナ」ではありません。「今ある拡張が、以前固定したものと
+完全に同じか」を検証します。
+
+- パスは`$HOME` / `$WORKSPACE`へ正規化
+- 内容はSHA-256で決定的にハッシュ
+- `.git`を含む隠しファイルも除外せずhash
+- MCPの生設定は保存せず、env/header値・典型的な秘密field・URL credential/query値をredact
+- symlink先は辿らずリンク文字列をhashし、root symlink・読めないファイル・壊れた設定は失敗
+- `verify`はclean=0、drift=1、実行エラー=2
+
+lockfileも変更できる攻撃者、初回導入時から悪性の拡張、実行時だけ変わる挙動は防げません。
+未知のfield形状にある秘密値は完全には保証できないため、公開前にlockfileを確認してください。
+詳しくは[脅威モデル](docs/threat-model.md)を参照してください。
+
+## 既存ツールとの境界
+
+[Seal](https://sealfile.dev/)はproject-localなagent bundleのlockfileとロード時強制を
+すでに定義しています。Microsoft APMはprojectだけでなくglobal scopeの依存管理・
+content-hash lockfile・audit・SBOM・CI policyを提供しています。Snyk Agent Scanは
+ローカルsecurity scanと組織向けbackground monitoringを提供しています。
+
+したがってAgentFreezeは「global対応だから新しい」とは主張しません。v0.1で検証するのは、
+依存管理に宣言されていない、または管理外で書き換わった対応済みローカル状態を、拡張や
+MCPサーバーを起動せずに証拠化できるか、という一点です。workspace entryはv1 lockfileへ
+入れません。
+
+## 現在地
+
+v0.1ではinventory・freeze・verify・間隔指定のpolling monitorを提供します。これは
+2週間の需要検証であり、標準化・事業化・買収可能性は未検証です。署名付きprovenance、
+native filesystem event、隔離環境での発火検証は未実装です。実装済みと誤解させる安全主張は
+しません。
+
+ライセンスはMITです。仕様変更と中立運営の方針は
+[GOVERNANCE.md](docs/governance.md)にあります。
+
+[English README](README.md)

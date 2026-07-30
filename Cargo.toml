@@ -1,0 +1,36 @@
+[package]
+name = "agentfreeze"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Record no-exec integrity baselines for supported local AI agent extensions"
+license = "MIT"
+repository = "https://github.com/skikkh/agentfreeze"
+homepage = "https://github.com/skikkh/agentfreeze"
+documentation = "https://github.com/skikkh/agentfreeze/tree/main/docs"
+readme = "README.md"
+keywords = ["ai", "agents", "mcp", "integrity", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+toml = "0.9"
+
+[dev-dependencies]
+tempfile = "3.20"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

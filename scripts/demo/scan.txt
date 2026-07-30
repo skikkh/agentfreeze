@@ -1,0 +1,6 @@
+$ agentfreeze scan
+
+Found 79 extensions
+  34 skills  ·  26 plugins  ·  19 MCP servers
+
+Claude   Codex   Cursor   Gemini   VS Code

@@ -1,0 +1,8 @@
+# One installed Skill changes later
+
+$ agentfreeze verify
+
+Drift detected: 1 change
+  ~ modified  codex:skill:user:$HOME/.codex/skills/review
+
+exit 1

@@ -1,0 +1,41 @@
+# AgentFreeze
+
+> AgentFreeze records a local, no-exec integrity baseline for supported agent-extension state that
+> may exist outside a dependency manager.
+
+Canonical repository: https://github.com/skikkh/agentfreeze
+License: MIT
+Lockfile: agentfreeze.lock
+Current format: version 1
+
+## Commands
+
+- `agentfreeze scan`: read-only inventory
+- `agentfreeze freeze`: write the current baseline
+- `agentfreeze verify`: compare the current state with the baseline
+- `agentfreeze watch`: poll the baseline and emit changed observations
+
+## Security boundary
+
+AgentFreeze verifies observed content integrity and drift. It does not assert that an extension is
+safe, execute extensions, or monitor runtime behavior. MCP environment/header values, likely
+secret fields, and URL credentials/query values are redacted before hashing; unknown secret shapes
+may remain and lockfiles require review before publication. Internal symlinks are hashed without
+traversal; symlinked extension roots and unreadable sources fail closed.
+
+## Existing standard relationship
+
+Seal (https://sealfile.dev/) defines project-local bundle authorization. Microsoft APM
+(https://github.com/microsoft/apm) defines project and global package state, dependency
+installation, lockfiles, audit, and policy. Snyk Agent Scan
+(https://github.com/snyk/agent-scan) provides security scanning and centralized background
+monitoring. AgentFreeze v0.1 tests a narrower offline, no-exec baseline for supported local state
+outside those declared manager boundaries. It does not claim compatibility or uniqueness.
+
+## Documentation
+
+- README: https://github.com/skikkh/agentfreeze/blob/main/README.md
+- Format specification: https://github.com/skikkh/agentfreeze/blob/main/docs/spec/v1.md
+- Threat model: https://github.com/skikkh/agentfreeze/blob/main/docs/threat-model.md
+- Governance: https://github.com/skikkh/agentfreeze/blob/main/docs/governance.md
+- Roadmap: https://github.com/skikkh/agentfreeze/blob/main/docs/roadmap.md

@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/skikkh/agentfreeze/main/schema/agentfreeze-lock-v1.schema.json",
+  "title": "AgentFreeze lockfile v1",
+  "description": "A deterministic inventory baseline for user-level AI agent extensions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "lockfileVersion",
+    "generatedBy",
+    "scanScopes",
+    "entries"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://raw.githubusercontent.com/skikkh/agentfreeze/main/schema/agentfreeze-lock-v1.schema.json"
+    },
+    "lockfileVersion": {
+      "const": 1
+    },
+    "generatedBy": {
+      "type": "string",
+      "pattern": "^agentfreeze [0-9]+\\.[0-9]+\\.[0-9]+"
+    },
+    "scanScopes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "const": "user"
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "ecosystem",
+        "kind",
+        "scope",
+        "name",
+        "source",
+        "digest",
+        "files",
+        "bytes",
+        "symlinks"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ecosystem": {
+          "enum": [
+            "agents",
+            "claude",
+            "codex",
+            "cursor",
+            "gemini",
+            "mcp",
+            "vscode"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "mcp-server",
+            "plugin",
+            "skill"
+          ]
+        },
+        "scope": {
+          "const": "user"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^\\$HOME(?:/|$)"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "symlinks": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

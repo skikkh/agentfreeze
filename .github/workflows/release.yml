@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: linux-amd64
+            executable: agentfreeze
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+            asset: darwin-arm64
+            executable: agentfreeze
+          - runner: macos-latest
+            target: x86_64-apple-darwin
+            asset: darwin-amd64
+            executable: agentfreeze
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: windows-amd64
+            executable: agentfreeze.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install Rust target
+        shell: bash
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal
+          rustup target add "${{ matrix.target }}" --toolchain 1.85.0
+      - name: Test
+        shell: bash
+        run: cargo +1.85.0 test --locked
+      - name: Build
+        shell: bash
+        run: cargo +1.85.0 build --release --locked --target "${{ matrix.target }}"
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist/package
+          cp "target/${{ matrix.target }}/release/${{ matrix.executable }}" dist/package/agentfreeze
+          cp LICENSE README.md dist/package/
+          tar -C dist/package -czf "dist/agentfreeze-${{ matrix.asset }}.tar.gz" .
+          rm -rf dist/package
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist/package | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.executable }}" dist/package/
+          Copy-Item LICENSE,README.md dist/package/
+          Compress-Archive -Path dist/package/* -DestinationPath "dist/agentfreeze-${{ matrix.asset }}.zip"
+          Remove-Item -Recurse -Force dist/package
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: "dist/*"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agentfreeze-${{ matrix.asset }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Add installer and checksums
+        run: |
+          cp install.sh dist/install.sh
+          cd dist
+          sha256sum agentfreeze-* install.sh > SHA256SUMS
+      - name: Attest checksums and installer
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: |
+            dist/SHA256SUMS
+            dist/install.sh
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}" dist/*
+          --verify-tag
+          --generate-notes
+          --title "AgentFreeze ${GITHUB_REF_NAME}"

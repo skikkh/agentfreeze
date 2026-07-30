@@ -1,0 +1,24 @@
+name: Host support
+description: Propose a new agent host or extension format.
+title: "[host] "
+labels: ["host-support"]
+body:
+  - type: input
+    id: host
+    attributes:
+      label: Host and version
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Primary documentation URL
+    validations:
+      required: true
+  - type: textarea
+    id: locations
+    attributes:
+      label: Documented user and workspace locations
+      description: Do not paste real secrets or private paths.
+    validations:
+      required: true
