@@ -121,13 +121,13 @@ fn discover_skill_root(
     home: &Path,
     entries: &mut BTreeMap<String, Entry>,
 ) -> Result<()> {
-    if !path_exists(root)? {
-        return Ok(());
-    }
     let boundary = match scope {
         EntryScope::User => home,
         EntryScope::Workspace => workspace,
     };
+    if !path_exists(root, boundary, "skill discovery root")? {
+        return Ok(());
+    }
     let resolved_root = resolve_within_boundary(root, boundary, "skill discovery root")?;
     let mut children = fs::read_dir(&resolved_root)
         .with_context(|| format!("cannot list skill root {}", root.display()))?
@@ -137,7 +137,10 @@ fn discover_skill_root(
 
     for child in children {
         let path = child.path();
-        if skill_marker_exists(&path.join("SKILL.md"))? {
+        if !is_skill_candidate_directory(&path)? {
+            continue;
+        }
+        if skill_marker_exists(&path.join("SKILL.md"), &resolved_root)? {
             let name = child.file_name().to_string_lossy().into_owned();
             add_path_entry(
                 entries,
@@ -154,6 +157,32 @@ fn discover_skill_root(
         }
     }
     Ok(())
+}
+
+fn is_skill_candidate_directory(path: &Path) -> Result<bool> {
+    let metadata =
+        fs::symlink_metadata(path).with_context(|| format!("cannot inspect {}", path.display()))?;
+    if metadata.is_dir() {
+        return Ok(true);
+    }
+    if metadata.is_file() {
+        return Ok(false);
+    }
+    if metadata.file_type().is_symlink() {
+        let target = fs::metadata(path)
+            .with_context(|| format!("broken discovery symlink {}", path.display()))?;
+        if target.is_dir() {
+            return Ok(true);
+        }
+        if target.is_file() {
+            return Ok(false);
+        }
+        bail!(
+            "unsupported skill discovery symlink target: {}",
+            path.display()
+        );
+    }
+    bail!("unsupported skill discovery entry: {}", path.display())
 }
 
 fn discover_user_plugins(
@@ -216,13 +245,13 @@ fn discover_manifest_plugins(
     home: &Path,
     entries: &mut BTreeMap<String, Entry>,
 ) -> Result<()> {
-    if !path_exists(root)? {
-        return Ok(());
-    }
     let boundary = match scope {
         EntryScope::User => home,
         EntryScope::Workspace => workspace,
     };
+    if !path_exists(root, boundary, "plugin discovery root")? {
+        return Ok(());
+    }
     let resolved_root = resolve_within_boundary(root, boundary, "plugin discovery root")?;
     let mut manifests = Vec::new();
     let mut visited = BTreeMap::new();
@@ -422,7 +451,7 @@ fn discover_claude_installed_plugins(
     entries: &mut BTreeMap<String, Entry>,
 ) -> Result<()> {
     let registry = home.join(".claude/plugins/installed_plugins.json");
-    if !path_exists(&registry)? {
+    if !path_exists(&registry, home, "Claude plugin registry")? {
         return Ok(());
     }
     let resolved_registry = resolve_within_boundary(&registry, home, "Claude plugin registry")?;
@@ -605,7 +634,7 @@ fn discover_claude_project_mcp(
     entries: &mut BTreeMap<String, Entry>,
 ) -> Result<()> {
     let path = home.join(".claude.json");
-    if !path_exists(&path)? {
+    if !path_exists(&path, home, "Claude project MCP config")? {
         return Ok(());
     }
     let resolved = resolve_within_boundary(&path, home, "Claude project MCP config")?;
@@ -663,13 +692,13 @@ fn discover_json_mcp(
     home: &Path,
     entries: &mut BTreeMap<String, Entry>,
 ) -> Result<()> {
-    if !path_exists(path)? {
-        return Ok(());
-    }
     let boundary = match scope {
         EntryScope::User => home,
         EntryScope::Workspace => workspace,
     };
+    if !path_exists(path, boundary, "MCP JSON config")? {
+        return Ok(());
+    }
     let resolved = resolve_within_boundary(path, boundary, "MCP JSON config")?;
     let bytes = fs::read(&resolved).with_context(|| format!("cannot read {}", path.display()))?;
     let value: Value = serde_json::from_slice(&bytes)
@@ -702,13 +731,13 @@ fn discover_toml_mcp(
     home: &Path,
     entries: &mut BTreeMap<String, Entry>,
 ) -> Result<()> {
-    if !path_exists(path)? {
-        return Ok(());
-    }
     let boundary = match scope {
         EntryScope::User => home,
         EntryScope::Workspace => workspace,
     };
+    if !path_exists(path, boundary, "MCP TOML config")? {
+        return Ok(());
+    }
     let resolved = resolve_within_boundary(path, boundary, "MCP TOML config")?;
     let text =
         fs::read_to_string(&resolved).with_context(|| format!("cannot read {}", path.display()))?;
@@ -926,24 +955,62 @@ fn pointer_escape(value: &str) -> String {
     value.replace('~', "~0").replace('/', "~1")
 }
 
-fn path_exists(path: &Path) -> Result<bool> {
+fn path_exists(path: &Path, boundary: &Path, label: &str) -> Result<bool> {
+    if !path.starts_with(boundary) {
+        bail!(
+            "{label} is outside its declared boundary: {}",
+            path.display()
+        );
+    }
     match fs::metadata(path) {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            match fs::symlink_metadata(path) {
-                Ok(metadata) if metadata.file_type().is_symlink() => {
-                    bail!("broken discovery symlink {}", path.display())
-                }
-                Ok(_) => Ok(true),
-                Err(link_error) if link_error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-                Err(link_error) => Err(link_error)
-                    .with_context(|| format!("cannot inspect discovery path {}", path.display())),
-            }
+            missing_path_is_safe(path, boundary, label)
         }
         Err(error) => {
             Err(error).with_context(|| format!("cannot inspect discovery path {}", path.display()))
         }
     }
+}
+
+fn missing_path_is_safe(path: &Path, boundary: &Path, label: &str) -> Result<bool> {
+    let mut candidate = Some(path);
+    while let Some(current) = candidate {
+        if !current.starts_with(boundary) {
+            break;
+        }
+        match fs::symlink_metadata(current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                let resolved = current.canonicalize().with_context(|| {
+                    format!(
+                        "broken discovery symlink {} while inspecting {label} {}",
+                        current.display(),
+                        path.display()
+                    )
+                })?;
+                if !resolved.starts_with(boundary) {
+                    bail!(
+                        "{label} ancestor escapes its boundary: {} -> {}",
+                        current.display(),
+                        resolved.display()
+                    );
+                }
+                return Ok(false);
+            }
+            Ok(_) => return Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("cannot inspect discovery ancestor {}", current.display())
+                });
+            }
+        }
+        if current == boundary {
+            break;
+        }
+        candidate = current.parent();
+    }
+    Ok(false)
 }
 
 fn resolve_within_boundary(path: &Path, boundary: &Path, label: &str) -> Result<PathBuf> {
@@ -960,20 +1027,16 @@ fn resolve_within_boundary(path: &Path, boundary: &Path, label: &str) -> Result<
     Ok(resolved)
 }
 
-fn skill_marker_exists(path: &Path) -> Result<bool> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => Ok(metadata.is_file() || metadata.file_type().is_symlink()),
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-            ) =>
-        {
-            Ok(false)
-        }
-        Err(error) => {
-            Err(error).with_context(|| format!("cannot inspect skill marker {}", path.display()))
-        }
+fn skill_marker_exists(path: &Path, boundary: &Path) -> Result<bool> {
+    if !path_exists(path, boundary, "skill marker")? {
+        return Ok(false);
+    }
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("cannot inspect skill marker {}", path.display()))?;
+    if metadata.is_file() || metadata.file_type().is_symlink() {
+        Ok(true)
+    } else {
+        bail!("skill marker is not a file: {}", path.display())
     }
 }
 

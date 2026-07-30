@@ -77,4 +77,6 @@ authentication is required.
 
 Unreadable sources, malformed known config files, broken or boundary-escaping discovery links,
 unsupported filesystem entries, invalid lockfiles, and sources changing size during hashing return
-exit code `2`. CI and hooks must treat both `1` and `2` as failures.
+exit code `2`. A known path with a missing leaf is treated as absent only after every existing
+symlink ancestor is shown to resolve inside its declared boundary. CI and hooks must treat both `1`
+and `2` as failures.

@@ -21,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Semantic type validation for known MCP containers and server definitions.
 - Canonical boundary enforcement for known MCP configs, plugin registries, and plugin discovery
   aliases.
+- Fail-closed validation of broken or boundary-escaping parent links on known discovery paths.
 - Non-following hashes for internal symlink targets and complete coverage of hidden files.
 - CI, release checksums, and build-provenance attestation workflow.
 - Installer-side build-provenance verification when GitHub CLI is available.

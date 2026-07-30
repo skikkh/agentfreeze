@@ -891,6 +891,283 @@ fn freeze_to(
 
 #[cfg(unix)]
 #[test]
+fn broken_mcp_config_parents_fail_closed_across_nested_routes() {
+    use std::os::unix::fs::symlink;
+
+    let cases = [
+        (true, ".cursor/mcp.json", "user"),
+        (true, ".gemini/settings.json", "user"),
+        (
+            true,
+            "Library/Application Support/Claude/claude_desktop_config.json",
+            "user",
+        ),
+        (
+            true,
+            "Library/Application Support/Code/User/mcp.json",
+            "user",
+        ),
+        (
+            true,
+            "AppData/Roaming/Claude/claude_desktop_config.json",
+            "user",
+        ),
+        (true, "AppData/Roaming/Code/User/mcp.json", "user"),
+        (true, ".codex/config.toml", "user"),
+        (false, ".cursor/mcp.json", "workspace"),
+        (false, ".gemini/settings.json", "workspace"),
+        (false, ".vscode/mcp.json", "workspace"),
+        (false, ".codex/config.toml", "workspace"),
+    ];
+
+    for (index, (under_home, relative, scope)) in cases.into_iter().enumerate() {
+        let fixture = tempdir().expect("tempdir");
+        let home = fixture.path().join("home");
+        let workspace = fixture.path().join("workspace");
+        fs::create_dir_all(&home).expect("home");
+        fs::create_dir_all(&workspace).expect("workspace");
+        let baseline = user_baseline_if_needed(scope, &home, &workspace, fixture.path());
+        let boundary = if under_home { &home } else { &workspace };
+        let first = std::path::Path::new(relative)
+            .components()
+            .next()
+            .expect("first component")
+            .as_os_str();
+        symlink(
+            boundary.join(format!("missing-parent-{index}")),
+            boundary.join(first),
+        )
+        .expect("broken config parent");
+
+        assert_broken_discovery_fails(scope, &home, &workspace, baseline.as_ref(), relative);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn broken_skill_parents_and_children_fail_closed_across_supported_roots() {
+    use std::os::unix::fs::symlink;
+
+    let cases = [
+        (".agents/skills", "user"),
+        (".claude/skills", "user"),
+        (".codex/skills", "user"),
+        (".cursor/skills", "user"),
+        (".cursor/skills-cursor", "user"),
+        (".gemini/skills", "user"),
+        (".agents/skills", "workspace"),
+        (".claude/skills", "workspace"),
+        (".codex/skills", "workspace"),
+        (".cursor/skills", "workspace"),
+        (".gemini/skills", "workspace"),
+    ];
+
+    for (index, (relative, scope)) in cases.into_iter().enumerate() {
+        for failure in ["parent", "child"] {
+            let fixture = tempdir().expect("tempdir");
+            let home = fixture.path().join("home");
+            let workspace = fixture.path().join("workspace");
+            fs::create_dir_all(&home).expect("home");
+            fs::create_dir_all(&workspace).expect("workspace");
+            let baseline = user_baseline_if_needed(scope, &home, &workspace, fixture.path());
+            let boundary = if scope == "user" { &home } else { &workspace };
+            let root = boundary.join(relative);
+
+            if failure == "parent" {
+                let first = std::path::Path::new(relative)
+                    .components()
+                    .next()
+                    .expect("first component")
+                    .as_os_str();
+                symlink(
+                    boundary.join(format!("missing-skill-parent-{index}")),
+                    boundary.join(first),
+                )
+                .expect("broken skill parent");
+            } else {
+                fs::create_dir_all(&root).expect("skill root");
+                symlink(
+                    root.join(format!("missing-skill-{index}")),
+                    root.join("active"),
+                )
+                .expect("broken skill child");
+            }
+
+            assert_broken_discovery_fails(
+                scope,
+                &home,
+                &workspace,
+                baseline.as_ref(),
+                &format!("{relative}:{failure}"),
+            );
+        }
+    }
+}
+
+#[test]
+fn regular_management_files_inside_skill_roots_are_not_skill_candidates() {
+    let fixture = tempdir().expect("tempdir");
+    let home = fixture.path().join("home");
+    let workspace = fixture.path().join("workspace");
+    let managed_root = home.join(".cursor/skills-cursor");
+    fs::create_dir_all(&managed_root).expect("managed skill root");
+    fs::create_dir_all(&workspace).expect("workspace");
+    fs::write(
+        managed_root.join(".cursor-managed-skills-manifest.json"),
+        r#"{"version":1}"#,
+    )
+    .expect("management file");
+
+    let scan = scan_scope(&home, &workspace, "user");
+    assert!(
+        scan.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scan.stderr)
+    );
+    assert!(String::from_utf8_lossy(&scan.stdout).contains("Found 0 extensions"));
+}
+
+#[cfg(unix)]
+#[test]
+fn broken_plugin_and_registry_parents_fail_closed() {
+    use std::os::unix::fs::symlink;
+
+    let cases = [
+        (".codex/plugins", "user", "user-codex"),
+        (".gemini", "user", "user-gemini"),
+        (".claude", "workspace", "workspace-claude"),
+        (".codex", "workspace", "workspace-codex"),
+        (".gemini", "workspace", "workspace-gemini"),
+        (".claude/plugins", "user", "claude-registry"),
+    ];
+
+    for (index, (broken_parent, scope, case_name)) in cases.into_iter().enumerate() {
+        let fixture = tempdir().expect("tempdir");
+        let home = fixture.path().join("home");
+        let workspace = fixture.path().join("workspace");
+        fs::create_dir_all(&home).expect("home");
+        fs::create_dir_all(&workspace).expect("workspace");
+        let baseline = user_baseline_if_needed(scope, &home, &workspace, fixture.path());
+        let boundary = if scope == "user" { &home } else { &workspace };
+        let link = boundary.join(broken_parent);
+        fs::create_dir_all(link.parent().expect("broken parent owner")).expect("parent owner");
+        symlink(
+            boundary.join(format!("missing-plugin-parent-{index}")),
+            &link,
+        )
+        .expect("broken plugin parent");
+
+        assert_broken_discovery_fails(scope, &home, &workspace, baseline.as_ref(), case_name);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn missing_paths_under_internal_aliases_are_absent_but_external_aliases_fail() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = tempdir().expect("tempdir");
+    let home = fixture.path().join("home");
+    let workspace = fixture.path().join("workspace");
+    let internal = home.join("internal-cursor");
+    fs::create_dir_all(&internal).expect("internal target");
+    fs::create_dir_all(&workspace).expect("workspace");
+    symlink(&internal, home.join(".cursor")).expect("internal parent alias");
+
+    let internal_scan = scan_scope(&home, &workspace, "user");
+    assert!(
+        internal_scan.status.success(),
+        "{}",
+        String::from_utf8_lossy(&internal_scan.stderr)
+    );
+
+    let external_home = fixture.path().join("external-home");
+    let external_workspace = fixture.path().join("external-workspace");
+    let outside = fixture.path().join("outside-cursor");
+    fs::create_dir_all(&external_home).expect("external home");
+    fs::create_dir_all(&external_workspace).expect("external workspace");
+    fs::create_dir_all(&outside).expect("outside target");
+    symlink(&outside, external_home.join(".cursor")).expect("external parent alias");
+
+    let external_scan = scan_scope(&external_home, &external_workspace, "user");
+    assert_eq!(external_scan.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&external_scan.stderr).contains("ancestor escapes its boundary"),
+        "{}",
+        String::from_utf8_lossy(&external_scan.stderr)
+    );
+}
+
+fn user_baseline_if_needed(
+    scope: &str,
+    home: &std::path::Path,
+    workspace: &std::path::Path,
+    fixture: &std::path::Path,
+) -> Option<(std::path::PathBuf, Vec<u8>)> {
+    if scope != "user" {
+        return None;
+    }
+    fs::write(
+        home.join(".claude.json"),
+        r#"{"mcpServers":{"baseline":{"command":"baseline"}}}"#,
+    )
+    .expect("baseline config");
+    let lockfile = fixture.join("agentfreeze.lock");
+    let freeze = freeze_to(home, workspace, &lockfile);
+    assert!(
+        freeze.status.success(),
+        "{}",
+        String::from_utf8_lossy(&freeze.stderr)
+    );
+    let bytes = fs::read(&lockfile).expect("baseline lock");
+    Some((lockfile, bytes))
+}
+
+fn assert_broken_discovery_fails(
+    scope: &str,
+    home: &std::path::Path,
+    workspace: &std::path::Path,
+    baseline: Option<&(std::path::PathBuf, Vec<u8>)>,
+    case_name: &str,
+) {
+    let scan = scan_scope(home, workspace, scope);
+    assert_eq!(
+        scan.status.code(),
+        Some(2),
+        "scan {case_name}: {}",
+        String::from_utf8_lossy(&scan.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&scan.stderr).contains("broken discovery symlink"),
+        "scan {case_name}: {}",
+        String::from_utf8_lossy(&scan.stderr)
+    );
+
+    if let Some((lockfile, expected)) = baseline {
+        let refreeze = freeze_to(home, workspace, lockfile);
+        assert_eq!(
+            refreeze.status.code(),
+            Some(2),
+            "refreeze {case_name}: {}",
+            String::from_utf8_lossy(&refreeze.stderr)
+        );
+        assert_eq!(
+            fs::read(lockfile).expect("preserved baseline"),
+            *expected,
+            "case {case_name}"
+        );
+        let verification = verify(env!("CARGO_BIN_EXE_agentfreeze"), home, workspace, lockfile);
+        assert_eq!(
+            verification.status.code(),
+            Some(2),
+            "verify {case_name}: {}",
+            String::from_utf8_lossy(&verification.stderr)
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn mcp_config_symlink_escapes_fail_closed_across_supported_paths() {
     use std::os::unix::fs::symlink;
 
