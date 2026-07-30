@@ -4,7 +4,9 @@
 
 AgentFreezeはローカル専用・非実行型の証拠収集ツールです。Claude、Codex、Cursor、
 Gemini、共通agentディレクトリの対応済みSkills・プラグイン・MCP定義を、起動せずに
-検出します。現在の状態を`agentfreeze.lock`へ保存し、追加・削除・内容変更を見つけます。
+検出します。現在の状態を`agentfreeze.lock`へ保存し、追加・削除・対象内の内容変更を
+見つけます。ただしv0.1では、秘密としてredactした値だけのローテーションや、その秘密だけに
+埋め込まれたaccount差し替えは検知しません。
 
 ```console
 $ agentfreeze scan
@@ -60,6 +62,7 @@ AgentFreezeは「安全判定スキャナ」ではありません。「今ある
 - `verify`はclean=0、drift=1、実行エラー=2
 
 lockfileも変更できる攻撃者、初回導入時から悪性の拡張、実行時だけ変わる挙動は防げません。
+秘密として認識された値だけの変更もv0.1の検知外です。
 未知の名前を持つ低エントロピーの秘密値はdigestへ影響し、周辺定義が既知ならオフライン推測の
 対象になる可能性があります。公開前に拡張名とsource locationを確認してください。
 詳しくは[脅威モデル](docs/threat-model.md)を参照してください。

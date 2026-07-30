@@ -14,8 +14,51 @@ permissions:
   contents: read
 
 jobs:
+  preflight:
+    name: Release preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.85.0 --profile minimal --component clippy,rustfmt
+      - name: Bind release tags to the package version and current main
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(
+            cargo +1.85.0 metadata --no-deps --format-version 1 |
+              jq -r '.packages[] | select(.name == "agentfreeze") | .version'
+          )"
+          expected_tag="v${package_version}"
+          if [ "${GITHUB_REF_NAME}" != "${expected_tag}" ]; then
+            echo "release tag ${GITHUB_REF_NAME} does not match Cargo version ${package_version}" >&2
+            exit 2
+          fi
+          main_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [ -z "${main_sha}" ] || [ "${GITHUB_SHA}" != "${main_sha}" ]; then
+            echo "release commit ${GITHUB_SHA} is not the current main commit ${main_sha:-missing}" >&2
+            exit 2
+          fi
+      - name: Format
+        run: cargo +1.85.0 fmt --all -- --check
+      - name: Lint
+        run: cargo +1.85.0 clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo +1.85.0 test --all-targets --locked
+      - name: Audit dependencies
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   build:
     name: Build ${{ matrix.asset }}
+    needs: preflight
     permissions:
       contents: read
       id-token: write
@@ -110,15 +153,30 @@ jobs:
           subject-path: |
             dist/SHA256SUMS
             dist/install.sh
-      - name: Create draft release with all assets
+      - name: Prepare recoverable draft release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "${GITHUB_REF_NAME}" dist/*
-          --draft
-          --verify-tag
-          --generate-notes
-          --title "AgentFreeze ${GITHUB_REF_NAME}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          if draft_state="$(
+            gh release view "${GITHUB_REF_NAME}" --json isDraft --jq .isDraft 2>/dev/null
+          )"; then
+            if [ "${draft_state}" != "true" ]; then
+              echo "release ${GITHUB_REF_NAME} already exists and is not a draft" >&2
+              exit 2
+            fi
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --draft \
+              --verify-tag \
+              --generate-notes \
+              --title "AgentFreeze ${GITHUB_REF_NAME}"
+          fi
+      - name: Upload or replace draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}

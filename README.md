@@ -9,7 +9,8 @@
 AgentFreeze is a local, no-exec evidence collector for Claude, Codex, Cursor, Gemini, and shared
 agent directories. It inventories supported Skills, plugins, and MCP definitions without starting
 them, records their exact observed state in `agentfreeze.lock`, then detects additions, removals,
-and content changes.
+and in-scope content changes. For MCP definitions, v0.1 deliberately excludes values redacted as
+secrets: a credential-only rotation or account swap encoded only inside a secret is not detected.
 
 ![AgentFreeze detects extension drift](docs/assets/demo.gif)
 
@@ -140,7 +141,8 @@ lockfile. Likely secret fields—including secret-like environment, header, CLI-
 keys—plus URL credentials are redacted before hashing. Non-secret routing values such as tenant,
 region, and mode remain covered by drift detection. An unrecognized low-entropy secret can still
 influence the digest and may be vulnerable to offline guessing when the rest of its definition is
-known. Review extension names and source locations before publishing a lockfile.
+known. Conversely, a change encoded only in a recognized secret field is intentionally invisible
+in v0.1. Review extension names and source locations before publishing a lockfile.
 
 ## Drift is explicit
 

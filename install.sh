@@ -67,16 +67,32 @@ fi
 
 temporary_directory="$(mktemp -d)"
 staging_binary=""
+install_lock=""
 cleanup() {
   rm -rf "$temporary_directory"
   if [ -n "$staging_binary" ]; then
     rm -f "$staging_binary"
+  fi
+  if [ -n "$install_lock" ]; then
+    rmdir "$install_lock" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+mkdir -p "$binary_directory"
+if [ -d "${binary_directory}/agentfreeze" ]; then
+  echo "error: ${binary_directory}/agentfreeze is a directory" >&2
+  exit 2
+fi
+lock_candidate="${binary_directory}/.agentfreeze-install.lock"
+if ! mkdir "$lock_candidate"; then
+  echo "error: another AgentFreeze installation is using ${binary_directory}" >&2
+  exit 2
+fi
+install_lock="$lock_candidate"
 
 curl --proto '=https' --tlsv1.2 -fLsS \
   "${base_url}/${archive}" \
@@ -163,11 +179,6 @@ else
 fi
 
 tar -xzf "${temporary_directory}/${archive}" -C "$temporary_directory"
-mkdir -p "$binary_directory"
-if [ -d "${binary_directory}/agentfreeze" ]; then
-  echo "error: ${binary_directory}/agentfreeze is a directory" >&2
-  exit 2
-fi
 staging_binary="$(mktemp "${binary_directory}/.agentfreeze.XXXXXX")"
 install -m 0755 "${temporary_directory}/agentfreeze" "$staging_binary"
 mv -f "$staging_binary" "${binary_directory}/agentfreeze"

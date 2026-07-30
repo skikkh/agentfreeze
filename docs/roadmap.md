@@ -50,6 +50,8 @@ Success gate:
 
 - native file/config events with bounded resource use
 - signed, redacted drift events
+- privacy-preserving credential-identity drift detection that does not expose raw or cheaply
+  guessable secrets
 - GitHub, Slack, and local notification adapters
 - no silent loss during restart or partial writes
 
