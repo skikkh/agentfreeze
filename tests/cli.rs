@@ -549,6 +549,346 @@ fn plugin_discovery_symlink_failures_are_closed_across_supported_roots() {
     }
 }
 
+#[derive(Clone, Copy)]
+enum McpMalformedFixture {
+    Json(&'static [&'static str]),
+    Toml,
+    ClaudeProject,
+}
+
+#[test]
+fn semantic_mcp_malformed_data_fails_closed_across_supported_paths() {
+    let cases = [
+        (
+            true,
+            ".claude.json",
+            "user",
+            McpMalformedFixture::Json(&["mcpServers"]),
+        ),
+        (
+            true,
+            ".cursor/mcp.json",
+            "user",
+            McpMalformedFixture::Json(&["mcpServers"]),
+        ),
+        (
+            true,
+            ".gemini/settings.json",
+            "user",
+            McpMalformedFixture::Json(&["mcpServers"]),
+        ),
+        (
+            true,
+            "Library/Application Support/Claude/claude_desktop_config.json",
+            "user",
+            McpMalformedFixture::Json(&["mcpServers"]),
+        ),
+        (
+            true,
+            "Library/Application Support/Code/User/mcp.json",
+            "user",
+            McpMalformedFixture::Json(&["servers", "mcpServers"]),
+        ),
+        (
+            true,
+            "AppData/Roaming/Claude/claude_desktop_config.json",
+            "user",
+            McpMalformedFixture::Json(&["mcpServers"]),
+        ),
+        (
+            true,
+            "AppData/Roaming/Code/User/mcp.json",
+            "user",
+            McpMalformedFixture::Json(&["servers", "mcpServers"]),
+        ),
+        (
+            true,
+            ".codex/config.toml",
+            "user",
+            McpMalformedFixture::Toml,
+        ),
+        (
+            false,
+            ".mcp.json",
+            "workspace",
+            McpMalformedFixture::Json(&["mcpServers", "servers"]),
+        ),
+        (
+            false,
+            ".cursor/mcp.json",
+            "workspace",
+            McpMalformedFixture::Json(&["mcpServers"]),
+        ),
+        (
+            false,
+            ".gemini/settings.json",
+            "workspace",
+            McpMalformedFixture::Json(&["mcpServers"]),
+        ),
+        (
+            false,
+            ".vscode/mcp.json",
+            "workspace",
+            McpMalformedFixture::Json(&["servers", "mcpServers"]),
+        ),
+        (
+            false,
+            ".codex/config.toml",
+            "workspace",
+            McpMalformedFixture::Toml,
+        ),
+        (
+            true,
+            ".claude.json",
+            "workspace",
+            McpMalformedFixture::ClaudeProject,
+        ),
+    ];
+
+    for (under_home, relative, scope, fixture_kind) in cases {
+        assert_semantic_mcp_malformed_case(under_home, relative, scope, fixture_kind);
+    }
+}
+
+fn assert_semantic_mcp_malformed_case(
+    under_home: bool,
+    relative: &str,
+    scope: &str,
+    fixture_kind: McpMalformedFixture,
+) {
+    let fixture = tempdir().expect("tempdir");
+    let home = fixture.path().join("home");
+    let workspace = fixture.path().join("workspace");
+    let config = if under_home {
+        home.join(relative)
+    } else {
+        workspace.join(relative)
+    };
+    fs::create_dir_all(config.parent().expect("config parent")).expect("config parent");
+    fs::create_dir_all(&home).expect("home");
+    fs::create_dir_all(&workspace).expect("workspace");
+    fs::write(&config, valid_mcp_content(fixture_kind)).expect("valid config");
+
+    let lockfile = fixture.path().join("agentfreeze.lock");
+    let baseline = if scope == "user" {
+        let freeze = freeze_to(&home, &workspace, &lockfile);
+        assert!(
+            freeze.status.success(),
+            "baseline {relative}: {}",
+            String::from_utf8_lossy(&freeze.stderr)
+        );
+        Some(fs::read(&lockfile).expect("baseline lock"))
+    } else {
+        None
+    };
+
+    for (variant, content) in malformed_mcp_contents(fixture_kind, &workspace) {
+        fs::write(&config, &content).expect("malformed config");
+        let scan = scan_scope(&home, &workspace, scope);
+        assert_eq!(
+            scan.status.code(),
+            Some(2),
+            "case {relative} {variant} content={content}: {}",
+            String::from_utf8_lossy(&scan.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&scan.stderr).contains("must be"),
+            "case {relative} {variant}: {}",
+            String::from_utf8_lossy(&scan.stderr)
+        );
+
+        if let Some(expected_lock) = &baseline {
+            let refreeze = freeze_to(&home, &workspace, &lockfile);
+            assert_eq!(
+                refreeze.status.code(),
+                Some(2),
+                "refreeze {relative} {variant}"
+            );
+            assert_eq!(
+                fs::read(&lockfile).expect("preserved lock"),
+                *expected_lock,
+                "case {relative} {variant}"
+            );
+            let verification = verify(
+                env!("CARGO_BIN_EXE_agentfreeze"),
+                &home,
+                &workspace,
+                &lockfile,
+            );
+            assert_eq!(
+                verification.status.code(),
+                Some(2),
+                "verify {relative} {variant}"
+            );
+        }
+    }
+}
+
+fn valid_mcp_content(fixture: McpMalformedFixture) -> &'static str {
+    match fixture {
+        McpMalformedFixture::Json(_) => "{}",
+        McpMalformedFixture::Toml => "",
+        McpMalformedFixture::ClaudeProject => r#"{"projects":{}}"#,
+    }
+}
+
+fn malformed_mcp_contents(
+    fixture: McpMalformedFixture,
+    workspace: &std::path::Path,
+) -> Vec<(&'static str, String)> {
+    match fixture {
+        McpMalformedFixture::Json(keys) => {
+            let mut cases = [
+                ("root-array", "[]"),
+                ("root-null", "null"),
+                ("root-string", r#""wrong""#),
+                ("root-number", "1"),
+            ]
+            .into_iter()
+            .map(|(name, raw)| (name, raw.to_owned()))
+            .collect::<Vec<_>>();
+            cases.extend(
+                [
+                    ("container-array", "[]"),
+                    ("container-null", "null"),
+                    ("container-string", r#""wrong""#),
+                    ("container-number", "1"),
+                ]
+                .into_iter()
+                .map(|(name, raw)| (name, json_mcp_fixture(keys, raw))),
+            );
+            cases.push(("server-array", json_mcp_fixture(keys, r#"{"broken":[]}"#)));
+            cases
+        }
+        McpMalformedFixture::Toml => vec![
+            ("array", "mcp_servers = []\n".to_owned()),
+            ("string", "mcp_servers = \"wrong\"\n".to_owned()),
+            ("number", "mcp_servers = 1\n".to_owned()),
+            ("server-array", "[mcp_servers]\nbroken = []\n".to_owned()),
+        ],
+        McpMalformedFixture::ClaudeProject => {
+            let mut cases = [
+                ("root-array", "[]"),
+                ("root-null", "null"),
+                ("root-string", r#""wrong""#),
+                ("root-number", "1"),
+            ]
+            .into_iter()
+            .map(|(name, raw)| (name, raw.to_owned()))
+            .collect::<Vec<_>>();
+            cases.extend(
+                [
+                    ("projects-array", "[]"),
+                    ("projects-null", "null"),
+                    ("projects-string", r#""wrong""#),
+                    ("projects-number", "1"),
+                ]
+                .into_iter()
+                .map(|(name, raw)| (name, claude_projects_fixture(raw))),
+            );
+            cases.extend(
+                [
+                    ("project-array", "[]"),
+                    ("project-null", "null"),
+                    ("project-string", r#""wrong""#),
+                    ("project-number", "1"),
+                ]
+                .into_iter()
+                .map(|(name, raw)| (name, claude_project_entry_fixture(workspace, raw))),
+            );
+            cases.extend(
+                [
+                    ("container-array", "[]"),
+                    ("container-null", "null"),
+                    ("container-string", r#""wrong""#),
+                    ("container-number", "1"),
+                ]
+                .into_iter()
+                .map(|(name, raw)| (name, claude_project_fixture(workspace, raw))),
+            );
+            cases.push((
+                "server-array",
+                claude_project_fixture(workspace, r#"{"broken":[]}"#),
+            ));
+            cases
+        }
+    }
+}
+
+fn json_mcp_fixture(keys: &[&str], raw_value: &str) -> String {
+    let value: serde_json::Value = serde_json::from_str(raw_value).expect("fixture JSON");
+    let object = keys
+        .iter()
+        .map(|key| ((*key).to_owned(), value.clone()))
+        .collect::<serde_json::Map<_, _>>();
+    serde_json::Value::Object(object).to_string()
+}
+
+fn claude_projects_fixture(raw_projects: &str) -> String {
+    let projects: serde_json::Value =
+        serde_json::from_str(raw_projects).expect("projects fixture JSON");
+    serde_json::json!({"projects": projects}).to_string()
+}
+
+fn claude_project_entry_fixture(workspace: &std::path::Path, raw_project: &str) -> String {
+    let project: serde_json::Value =
+        serde_json::from_str(raw_project).expect("project fixture JSON");
+    let canonical_workspace = workspace.canonicalize().expect("canonical workspace");
+    let mut projects = serde_json::Map::new();
+    projects.insert(canonical_workspace.to_string_lossy().into_owned(), project);
+    serde_json::json!({"projects": projects}).to_string()
+}
+
+fn claude_project_fixture(workspace: &std::path::Path, raw_servers: &str) -> String {
+    let servers: serde_json::Value =
+        serde_json::from_str(raw_servers).expect("project fixture JSON");
+    let canonical_workspace = workspace.canonicalize().expect("canonical workspace");
+    let mut projects = serde_json::Map::new();
+    projects.insert(
+        canonical_workspace.to_string_lossy().into_owned(),
+        serde_json::json!({"mcpServers": servers}),
+    );
+    serde_json::json!({"projects": projects}).to_string()
+}
+
+fn scan_scope(
+    home: &std::path::Path,
+    workspace: &std::path::Path,
+    scope: &str,
+) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_agentfreeze"))
+        .args([
+            "scan",
+            "--home",
+            home.to_str().expect("home path"),
+            "--workspace",
+            workspace.to_str().expect("workspace path"),
+            "--scope",
+            scope,
+        ])
+        .output()
+        .expect("run scan")
+}
+
+fn freeze_to(
+    home: &std::path::Path,
+    workspace: &std::path::Path,
+    lockfile: &std::path::Path,
+) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_agentfreeze"))
+        .args([
+            "freeze",
+            "--home",
+            home.to_str().expect("home path"),
+            "--workspace",
+            workspace.to_str().expect("workspace path"),
+            "--output",
+            lockfile.to_str().expect("lock path"),
+        ])
+        .output()
+        .expect("run freeze")
+}
+
 #[cfg(unix)]
 #[test]
 fn mcp_config_symlink_escapes_fail_closed_across_supported_paths() {

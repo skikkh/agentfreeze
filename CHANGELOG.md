@@ -18,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Deterministic `agentfreeze.lock` v1 with anchored paths and secret-aware MCP hashing.
 - `scan`, `freeze`, `verify`, and polling `watch` commands with JSON output and stable exit codes.
 - Fail-closed handling for unreadable sources, malformed configs, and symlinked extension roots.
+- Semantic type validation for known MCP containers and server definitions.
 - Canonical boundary enforcement for known MCP configs, plugin registries, and plugin discovery
   aliases.
 - Non-following hashes for internal symlink targets and complete coverage of hidden files.

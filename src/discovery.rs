@@ -612,14 +612,33 @@ fn discover_claude_project_mcp(
     let bytes = fs::read(&resolved).with_context(|| format!("cannot read {}", path.display()))?;
     let value: Value = serde_json::from_slice(&bytes)
         .with_context(|| format!("invalid JSON in {}", path.display()))?;
-    let Some(projects) = value.get("projects").and_then(Value::as_object) else {
+    let root = value
+        .as_object()
+        .with_context(|| format!("MCP config {} must be a JSON object", path.display()))?;
+    let Some(projects_container) = root.get("projects") else {
         return Ok(());
     };
+    let projects = projects_container
+        .as_object()
+        .with_context(|| format!("projects in {} must be an object", path.display()))?;
     let workspace_key = workspace.to_string_lossy();
-    let Some(project) = projects.get(workspace_key.as_ref()) else {
+    let Some(workspace_config_value) = projects.get(workspace_key.as_ref()) else {
         return Ok(());
     };
-    if let Some(servers) = project.get("mcpServers").and_then(Value::as_object) {
+    let project = workspace_config_value.as_object().with_context(|| {
+        format!(
+            "project {} in {} must be an object",
+            workspace.display(),
+            path.display()
+        )
+    })?;
+    if let Some(servers_value) = project.get("mcpServers") {
+        let servers = servers_value.as_object().with_context(|| {
+            format!(
+                "projects/$WORKSPACE/mcpServers in {} must be an object",
+                path.display()
+            )
+        })?;
         add_mcp_servers(
             entries,
             servers,
@@ -655,8 +674,17 @@ fn discover_json_mcp(
     let bytes = fs::read(&resolved).with_context(|| format!("cannot read {}", path.display()))?;
     let value: Value = serde_json::from_slice(&bytes)
         .with_context(|| format!("invalid JSON in {}", path.display()))?;
+    let root = value
+        .as_object()
+        .with_context(|| format!("MCP config {} must be a JSON object", path.display()))?;
     for key in keys {
-        if let Some(servers) = value.get(*key).and_then(Value::as_object) {
+        if let Some(servers_value) = root.get(*key) {
+            let servers = servers_value.as_object().with_context(|| {
+                format!(
+                    "MCP container {key} in {} must be an object",
+                    path.display()
+                )
+            })?;
             add_mcp_servers(
                 entries, servers, ecosystem, scope, path, key, workspace, home,
             )?;
@@ -686,12 +714,21 @@ fn discover_toml_mcp(
         fs::read_to_string(&resolved).with_context(|| format!("cannot read {}", path.display()))?;
     let value: toml::Value =
         toml::from_str(&text).with_context(|| format!("invalid TOML in {}", path.display()))?;
-    let Some(servers) = value.get("mcp_servers").and_then(toml::Value::as_table) else {
+    let Some(servers_value) = value.get("mcp_servers") else {
         return Ok(());
     };
+    let servers = servers_value.as_table().with_context(|| {
+        format!(
+            "MCP container mcp_servers in {} must be a table",
+            path.display()
+        )
+    })?;
     let mut names = servers.keys().collect::<Vec<_>>();
     names.sort();
     for name in names {
+        if !servers[name].is_table() {
+            bail!("MCP server {name} in {} must be a table", path.display());
+        }
         let json = serde_json::to_value(&servers[name])
             .with_context(|| format!("cannot normalize MCP server {name}"))?;
         add_mcp_entry(
@@ -723,6 +760,9 @@ fn add_mcp_servers(
     let mut names = servers.keys().collect::<Vec<_>>();
     names.sort();
     for name in names {
+        if !servers[name].is_object() {
+            bail!("MCP server {name} in {} must be an object", path.display());
+        }
         add_mcp_entry(
             entries,
             ecosystem,
