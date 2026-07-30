@@ -55,8 +55,8 @@ AgentFreezeは「安全判定スキャナ」ではありません。「今ある
 - `.git`を含む隠しファイルも除外せずhash
 - MCPの生設定は保存せず、秘密らしいenv/header/query key・CLI flag・URL credentialをredact
 - tenant/region/modeなど非秘密のrouting値はhashに含め、接続先の取り違えを検知
-- symlink先は辿らずリンク文字列をhashし、root symlink・読めないファイル・壊れた設定・
-  home/workspace境界外へ解決する既知設定は失敗
+- 拡張内容のhashではsymlink先を辿らずリンク文字列をhash。manifest探索だけはroot内の
+  directory aliasを深さ制限付きで解決し、循環・上限超過・境界外なら失敗
 - `verify`はclean=0、drift=1、実行エラー=2
 
 lockfileも変更できる攻撃者、初回導入時から悪性の拡張、実行時だけ変わる挙動は防げません。

@@ -310,6 +310,247 @@ fn plugin_symlink_escapes_fail_closed_across_supported_roots() {
 
 #[cfg(unix)]
 #[test]
+fn internal_plugin_aliases_reach_targets_beyond_physical_depth_across_supported_roots() {
+    use std::os::unix::fs::symlink;
+
+    let cases = [
+        (
+            ".codex/plugins/cache",
+            "a/b/c/d/e/f/p",
+            ".codex-plugin/plugin.json",
+            "user",
+        ),
+        (
+            ".gemini/extensions",
+            "a/b/c/p",
+            "gemini-extension.json",
+            "user",
+        ),
+        (
+            ".claude/plugins",
+            "a/b/c/d/p",
+            ".claude-plugin/plugin.json",
+            "workspace",
+        ),
+        (
+            ".codex/plugins",
+            "a/b/c/d/p",
+            ".codex-plugin/plugin.json",
+            "workspace",
+        ),
+        (
+            ".gemini/extensions",
+            "a/b/c/d/e/p",
+            "gemini-extension.json",
+            "workspace",
+        ),
+    ];
+
+    for (root_relative, target_relative, manifest_relative, scope) in cases {
+        let fixture = tempdir().expect("tempdir");
+        let home = fixture.path().join("home");
+        let workspace = fixture.path().join("workspace");
+        let boundary = if scope == "user" { &home } else { &workspace };
+        let root = boundary.join(root_relative);
+        let target = root.join(target_relative);
+        let manifest = target.join(manifest_relative);
+        fs::create_dir_all(manifest.parent().expect("manifest parent"))
+            .expect("create deep plugin");
+        fs::create_dir_all(&home).expect("home");
+        fs::create_dir_all(&workspace).expect("workspace");
+        fs::write(&manifest, r#"{"name":"deep-plugin","version":"1.0.0"}"#).expect("manifest");
+        symlink(&target, root.join("active")).expect("internal plugin alias");
+
+        let scan = Command::new(env!("CARGO_BIN_EXE_agentfreeze"))
+            .args([
+                "scan",
+                "--home",
+                home.to_str().expect("home path"),
+                "--workspace",
+                workspace.to_str().expect("workspace path"),
+                "--scope",
+                scope,
+                "--json",
+            ])
+            .output()
+            .expect("run scan");
+        assert!(
+            scan.status.success(),
+            "case {root_relative}: {}",
+            String::from_utf8_lossy(&scan.stderr)
+        );
+        let inventory: serde_json::Value = serde_json::from_slice(&scan.stdout).expect("scan JSON");
+        assert_eq!(inventory["count"], 1, "case {root_relative}");
+        assert_eq!(
+            inventory["entries"][0]["name"], "deep-plugin",
+            "case {root_relative}"
+        );
+
+        if scope == "user" {
+            assert_user_alias_freeze_verifies(&home, &workspace, fixture.path(), root_relative);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn assert_user_alias_freeze_verifies(
+    home: &std::path::Path,
+    workspace: &std::path::Path,
+    fixture: &std::path::Path,
+    case_name: &str,
+) {
+    let lockfile = fixture.join("agentfreeze.lock");
+    let freeze = Command::new(env!("CARGO_BIN_EXE_agentfreeze"))
+        .args([
+            "freeze",
+            "--home",
+            home.to_str().expect("home path"),
+            "--workspace",
+            workspace.to_str().expect("workspace path"),
+            "--output",
+            lockfile.to_str().expect("lock path"),
+            "--json",
+        ])
+        .output()
+        .expect("run freeze");
+    assert!(
+        freeze.status.success(),
+        "case {case_name}: {}",
+        String::from_utf8_lossy(&freeze.stderr)
+    );
+    let frozen: serde_json::Value = serde_json::from_slice(&freeze.stdout).expect("freeze JSON");
+    assert_eq!(frozen["entries"], 1, "case {case_name}");
+
+    let verify = Command::new(env!("CARGO_BIN_EXE_agentfreeze"))
+        .args([
+            "verify",
+            "--home",
+            home.to_str().expect("home path"),
+            "--workspace",
+            workspace.to_str().expect("workspace path"),
+            "--lockfile",
+            lockfile.to_str().expect("lock path"),
+            "--json",
+        ])
+        .output()
+        .expect("run verify");
+    assert!(
+        verify.status.success(),
+        "case {case_name}: {}",
+        String::from_utf8_lossy(&verify.stderr)
+    );
+    let verification: serde_json::Value =
+        serde_json::from_slice(&verify.stdout).expect("verify JSON");
+    assert_eq!(verification["status"], "clean", "case {case_name}");
+    assert_eq!(verification["locked"], 1, "case {case_name}");
+    assert_eq!(verification["observed"], 1, "case {case_name}");
+}
+
+#[cfg(unix)]
+#[test]
+fn plugin_discovery_symlink_failures_are_closed_across_supported_roots() {
+    use std::os::unix::fs::symlink;
+
+    let cases = [
+        (
+            ".codex/plugins/cache",
+            "user",
+            7_usize,
+            ".codex-plugin/plugin.json",
+        ),
+        (".gemini/extensions", "user", 3, "gemini-extension.json"),
+        (
+            ".claude/plugins",
+            "workspace",
+            5,
+            ".claude-plugin/plugin.json",
+        ),
+        (
+            ".codex/plugins",
+            "workspace",
+            5,
+            ".codex-plugin/plugin.json",
+        ),
+        (
+            ".gemini/extensions",
+            "workspace",
+            5,
+            "gemini-extension.json",
+        ),
+    ];
+
+    for (root_relative, scope, max_depth, manifest_relative) in cases {
+        for failure in ["broken", "cycle", "depth", "manifest"] {
+            let fixture = tempdir().expect("tempdir");
+            let home = fixture.path().join("home");
+            let workspace = fixture.path().join("workspace");
+            let boundary = if scope == "user" { &home } else { &workspace };
+            let root = boundary.join(root_relative);
+            fs::create_dir_all(&root).expect("plugin root");
+            fs::create_dir_all(&home).expect("home");
+            fs::create_dir_all(&workspace).expect("workspace");
+
+            let expected_error = match failure {
+                "broken" => {
+                    symlink(root.join("missing"), root.join("active")).expect("broken alias");
+                    "cannot resolve plugin discovery symlink"
+                }
+                "cycle" => {
+                    symlink(&root, root.join("active")).expect("cyclic alias");
+                    "plugin discovery symlink cycle"
+                }
+                "depth" => {
+                    let mut parent = root.clone();
+                    for index in 0..max_depth {
+                        parent = parent.join(format!("d{index}"));
+                    }
+                    let target = root.join("target");
+                    fs::create_dir_all(&parent).expect("depth boundary");
+                    fs::create_dir_all(&target).expect("internal target");
+                    symlink(&target, parent.join("active")).expect("depth alias");
+                    "plugin discovery symlink exceeds maximum depth"
+                }
+                "manifest" => {
+                    let payload = root.join("manifest-payload.json");
+                    let manifest = root.join("active").join(manifest_relative);
+                    fs::create_dir_all(manifest.parent().expect("manifest parent"))
+                        .expect("manifest parent");
+                    fs::write(&payload, r#"{"name":"linked","version":"1.0.0"}"#)
+                        .expect("manifest payload");
+                    symlink(&payload, &manifest).expect("manifest symlink");
+                    "symlinked plugin manifests are not supported"
+                }
+                _ => unreachable!(),
+            };
+
+            let scan = Command::new(env!("CARGO_BIN_EXE_agentfreeze"))
+                .args([
+                    "scan",
+                    "--home",
+                    home.to_str().expect("home path"),
+                    "--workspace",
+                    workspace.to_str().expect("workspace path"),
+                    "--scope",
+                    scope,
+                ])
+                .output()
+                .expect("run scan");
+            assert_eq!(
+                scan.status.code(),
+                Some(2),
+                "case {root_relative} {failure}"
+            );
+            assert!(
+                String::from_utf8_lossy(&scan.stderr).contains(expected_error),
+                "case {root_relative} {failure}: {}",
+                String::from_utf8_lossy(&scan.stderr)
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn mcp_config_symlink_escapes_fail_closed_across_supported_paths() {
     use std::os::unix::fs::symlink;
 

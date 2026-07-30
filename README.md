@@ -187,7 +187,8 @@ AgentFreeze v1 refuses workspace entries in its lockfile. See the
 - SHA-256 content digests with deterministic, length-prefixed hashing
 - hidden files such as `.git` are included; v1 has no ignored-name list
 - sorted inventory and deterministic JSON output
-- no symlink traversal; internal link targets are hashed as text and extension-root links fail
+- extension hashing never follows symlinks; manifest discovery resolves only bounded internal
+  directory aliases and fails on cycles, depth overflow, or boundary escape
 - no network requests during scan, freeze, verify, or watch
 - unreadable, malformed, broken, or boundary-escaping configured sources fail the operation
 - lockfile paths are anchored instead of exposing the local username

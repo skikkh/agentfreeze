@@ -63,6 +63,9 @@ Following symlinks can escape an extension root or create platform-dependent has
 AgentFreeze rejects a symlinked extension root. For internal symlinks it hashes the normalized link
 target string without following it. Retargeting the link is detected. Changes behind a stable link
 are detected only when the target is also a regular file inside the scanned extension tree.
+Plugin-manifest discovery is narrower: it resolves directory aliases only after canonical
+same-root validation, bounds them by logical discovery depth, deduplicates canonical targets, and
+fails on cycles or depth overflow.
 
 ## Lockfile integrity
 

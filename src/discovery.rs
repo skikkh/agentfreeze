@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -225,8 +225,19 @@ fn discover_manifest_plugins(
     };
     let resolved_root = resolve_within_boundary(root, boundary, "plugin discovery root")?;
     let mut manifests = Vec::new();
-    find_plugin_manifests(&resolved_root, &resolved_root, 0, max_depth, &mut manifests)?;
+    let mut visited = BTreeMap::new();
+    let mut active = BTreeSet::new();
+    find_plugin_manifests(
+        &resolved_root,
+        &resolved_root,
+        0,
+        max_depth,
+        &mut manifests,
+        &mut visited,
+        &mut active,
+    )?;
     manifests.sort();
+    manifests.dedup();
 
     for manifest in manifests {
         let plugin_root = if manifest.file_name().and_then(|name| name.to_str())
@@ -264,40 +275,108 @@ fn find_plugin_manifests(
     depth: usize,
     max_depth: usize,
     manifests: &mut Vec<PathBuf>,
+    visited: &mut BTreeMap<PathBuf, usize>,
+    active: &mut BTreeSet<PathBuf>,
 ) -> Result<()> {
     if depth > max_depth {
         return Ok(());
     }
-    let mut children = fs::read_dir(directory)
-        .with_context(|| format!("cannot list plugin directory {}", directory.display()))?
-        .collect::<std::io::Result<Vec<_>>>()
-        .with_context(|| format!("cannot list plugin directory {}", directory.display()))?;
-    children.sort_by_key(std::fs::DirEntry::file_name);
-
-    for child in children {
-        let path = child.path();
-        let metadata = fs::symlink_metadata(&path)
-            .with_context(|| format!("cannot inspect {}", path.display()))?;
-        if metadata.file_type().is_symlink() {
-            let target = path.canonicalize().with_context(|| {
-                format!("cannot resolve plugin discovery symlink {}", path.display())
-            })?;
-            if !target.starts_with(root) {
-                bail!(
-                    "plugin discovery symlink escapes its root: {} -> {}",
-                    path.display(),
-                    target.display()
-                );
-            }
-            continue;
-        }
-        if metadata.is_file() && is_plugin_manifest(&path) {
-            manifests.push(path);
-        } else if metadata.is_dir() {
-            find_plugin_manifests(root, &path, depth + 1, max_depth, manifests)?;
-        }
+    let directory = directory
+        .canonicalize()
+        .with_context(|| format!("cannot resolve plugin directory {}", directory.display()))?;
+    if !directory.starts_with(root) {
+        bail!(
+            "plugin discovery directory escapes its root: {}",
+            directory.display()
+        );
     }
-    Ok(())
+    if active.contains(&directory) {
+        bail!(
+            "plugin discovery symlink cycle reaches {}",
+            directory.display()
+        );
+    }
+    if visited
+        .get(&directory)
+        .is_some_and(|best_depth| *best_depth <= depth)
+    {
+        return Ok(());
+    }
+    visited.insert(directory.clone(), depth);
+    active.insert(directory.clone());
+
+    let result = (|| {
+        let mut children = fs::read_dir(&directory)
+            .with_context(|| format!("cannot list plugin directory {}", directory.display()))?
+            .collect::<std::io::Result<Vec<_>>>()
+            .with_context(|| format!("cannot list plugin directory {}", directory.display()))?;
+        children.sort_by_key(std::fs::DirEntry::file_name);
+
+        for child in children {
+            let path = child.path();
+            let metadata = fs::symlink_metadata(&path)
+                .with_context(|| format!("cannot inspect {}", path.display()))?;
+            if metadata.file_type().is_symlink() {
+                let target = path.canonicalize().with_context(|| {
+                    format!("cannot resolve plugin discovery symlink {}", path.display())
+                })?;
+                if !target.starts_with(root) {
+                    bail!(
+                        "plugin discovery symlink escapes its root: {} -> {}",
+                        path.display(),
+                        target.display()
+                    );
+                }
+                let target_metadata = fs::metadata(&target).with_context(|| {
+                    format!(
+                        "cannot inspect plugin discovery target {}",
+                        target.display()
+                    )
+                })?;
+                if target_metadata.is_dir() {
+                    if depth == max_depth {
+                        bail!(
+                            "plugin discovery symlink exceeds maximum depth: {} -> {}",
+                            path.display(),
+                            target.display()
+                        );
+                    }
+                    find_plugin_manifests(
+                        root,
+                        &target,
+                        depth + 1,
+                        max_depth,
+                        manifests,
+                        visited,
+                        active,
+                    )?;
+                } else if target_metadata.is_file() && is_plugin_manifest(&path) {
+                    bail!(
+                        "symlinked plugin manifests are not supported: {}",
+                        path.display()
+                    );
+                }
+                continue;
+            }
+            if metadata.is_file() && is_plugin_manifest(&path) {
+                manifests.push(path);
+            } else if metadata.is_dir() {
+                find_plugin_manifests(
+                    root,
+                    &path,
+                    depth + 1,
+                    max_depth,
+                    manifests,
+                    visited,
+                    active,
+                )?;
+            }
+        }
+        Ok(())
+    })();
+
+    active.remove(&directory);
+    result
 }
 
 fn is_plugin_manifest(path: &Path) -> bool {
