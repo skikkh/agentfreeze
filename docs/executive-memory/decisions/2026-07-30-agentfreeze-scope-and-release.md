@@ -127,11 +127,12 @@ fixtures upstream. If gate 4 fails, stop the standards bid even if individual us
 
 ## Implementation evidence at decision time
 
-- Rust 1.85 tests: 11 unit tests and 3 CLI integration tests passed.
+- Rust 1.85 tests: 13 unit tests and 5 CLI integration tests passed.
 - Rust 1.85 clippy with warnings denied passed.
-- A release build scanned one maintainer machine in 10.05 seconds.
+- A release build scanned one maintainer machine in 7.41 seconds.
 - The observed profile contained 79 entries: 34 skills, 26 plugins, and 19 MCP servers.
 - Freeze, verify, and one-cycle watch returned a clean 79-entry result.
-- JSON Schema validation passed; a heuristic scan found no raw home path or common secret pattern.
+- The v1 metaschema and generated lockfile validation passed; a heuristic scan found no raw home
+  path or common secret pattern.
 
 The `79` result is one observed machine, not a population estimate.

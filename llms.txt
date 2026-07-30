@@ -18,10 +18,12 @@ Current format: version 1
 ## Security boundary
 
 AgentFreeze verifies observed content integrity and drift. It does not assert that an extension is
-safe, execute extensions, or monitor runtime behavior. MCP environment/header values, likely
-secret fields, and URL credentials/query values are redacted before hashing; unknown secret shapes
-may remain and lockfiles require review before publication. Internal symlinks are hashed without
-traversal; symlinked extension roots and unreadable sources fail closed.
+safe, execute extensions, or monitor runtime behavior. Likely secret fields in MCP environment,
+header, CLI-flag, and URL-query positions plus URL credentials are redacted before hashing;
+non-secret routing values remain covered. An unrecognized low-entropy secret can still influence
+the digest and may be vulnerable to offline guessing when the surrounding definition is known;
+the sanitized definition itself is not serialized. Internal symlinks are hashed without traversal;
+symlinked extension roots and unreadable sources fail closed.
 
 ## Existing standard relationship
 

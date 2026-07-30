@@ -49,12 +49,14 @@ AgentFreezeは「安全判定スキャナ」ではありません。「今ある
 - パスは`$HOME` / `$WORKSPACE`へ正規化
 - 内容はSHA-256で決定的にハッシュ
 - `.git`を含む隠しファイルも除外せずhash
-- MCPの生設定は保存せず、env/header値・典型的な秘密field・URL credential/query値をredact
+- MCPの生設定は保存せず、秘密らしいenv/header/query key・CLI flag・URL credentialをredact
+- tenant/region/modeなど非秘密のrouting値はhashに含め、接続先の取り違えを検知
 - symlink先は辿らずリンク文字列をhashし、root symlink・読めないファイル・壊れた設定は失敗
 - `verify`はclean=0、drift=1、実行エラー=2
 
 lockfileも変更できる攻撃者、初回導入時から悪性の拡張、実行時だけ変わる挙動は防げません。
-未知のfield形状にある秘密値は完全には保証できないため、公開前にlockfileを確認してください。
+未知の名前を持つ低エントロピーの秘密値はdigestへ影響し、周辺定義が既知ならオフライン推測の
+対象になる可能性があります。公開前に拡張名とsource locationを確認してください。
 詳しくは[脅威モデル](docs/threat-model.md)を参照してください。
 
 ## 既存ツールとの境界

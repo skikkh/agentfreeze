@@ -46,10 +46,12 @@ a clean result is not a safety verdict.
 ## Secret handling
 
 AgentFreeze does not write raw MCP configuration to the lockfile. It hashes a sanitized,
-canonical form. Environment/header values, likely secret fields, CLI secret-flag values, and URL
-credentials/query values are replaced before hashing. This reduces credential exposure and
-offline guessing risk, but means redacted-value changes are not drift. Secret detection is not a
-proof: an unrecognized value outside those shapes can remain in the sanitized form.
+canonical form. Likely secret fields—including secret-like environment, header, CLI-flag, and
+URL-query keys—plus URL credentials are replaced before hashing. Non-secret routing values remain
+covered. This reduces credential exposure and offline guessing risk, but means a tenant or account
+change encoded only inside a redacted credential is not drift. Secret detection is not a proof: an
+unrecognized low-entropy secret can influence the final digest and may be vulnerable to offline
+guessing when the surrounding definition is known. The sanitized form itself is not serialized.
 
 Names of extensions, MCP servers, and anchored source locations remain in the lockfile. Review a
 lockfile before committing it to a public repository.

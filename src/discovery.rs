@@ -121,7 +121,7 @@ fn discover_skill_root(
     home: &Path,
     entries: &mut BTreeMap<String, Entry>,
 ) -> Result<()> {
-    if !root.exists() {
+    if !path_exists(root)? {
         return Ok(());
     }
     let mut children = fs::read_dir(root)
@@ -132,7 +132,7 @@ fn discover_skill_root(
 
     for child in children {
         let path = child.path();
-        if path.join("SKILL.md").is_file() {
+        if skill_marker_exists(&path.join("SKILL.md"))? {
             let name = child.file_name().to_string_lossy().into_owned();
             add_path_entry(
                 entries,
@@ -211,7 +211,7 @@ fn discover_manifest_plugins(
     home: &Path,
     entries: &mut BTreeMap<String, Entry>,
 ) -> Result<()> {
-    if !root.exists() {
+    if !path_exists(root)? {
         return Ok(());
     }
     let mut manifests = Vec::new();
@@ -302,9 +302,8 @@ fn manifest_identity(manifest: &Path, plugin_root: &Path) -> Result<(String, Opt
         .to_owned();
     let bytes = fs::read(manifest)
         .with_context(|| format!("cannot read plugin manifest {}", manifest.display()))?;
-    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
-        return Ok((fallback, None));
-    };
+    let value = serde_json::from_slice::<Value>(&bytes)
+        .with_context(|| format!("invalid JSON in plugin manifest {}", manifest.display()))?;
     let name = value
         .get("name")
         .and_then(Value::as_str)
@@ -323,7 +322,7 @@ fn discover_claude_installed_plugins(
     entries: &mut BTreeMap<String, Entry>,
 ) -> Result<()> {
     let registry = home.join(".claude/plugins/installed_plugins.json");
-    if !registry.exists() {
+    if !path_exists(&registry)? {
         return Ok(());
     }
     let bytes = fs::read(&registry)
@@ -347,16 +346,22 @@ fn discover_claude_installed_plugins(
                 bail!("Claude plugin {plugin_id} has no installPath");
             };
             let install_path = PathBuf::from(install_path);
-            if !install_path.starts_with(home) {
+            if !install_path.is_absolute() {
                 bail!(
-                    "Claude plugin path is outside the home directory: {}",
+                    "Claude plugin path is not absolute: {}",
                     install_path.display()
                 );
             }
-            if !install_path.exists() {
-                bail!(
-                    "Claude plugin {plugin_id} is registered but missing at {}",
+            let canonical_install_path = install_path.canonicalize().with_context(|| {
+                format!(
+                    "Claude plugin {plugin_id} is registered but unavailable at {}",
                     install_path.display()
+                )
+            })?;
+            if !canonical_install_path.starts_with(home) {
+                bail!(
+                    "Claude plugin path is outside the home directory: {}",
+                    canonical_install_path.display()
                 );
             }
             let version = record
@@ -499,7 +504,7 @@ fn discover_claude_project_mcp(
     entries: &mut BTreeMap<String, Entry>,
 ) -> Result<()> {
     let path = home.join(".claude.json");
-    if !path.exists() {
+    if !path_exists(&path)? {
         return Ok(());
     }
     let bytes = fs::read(&path).with_context(|| format!("cannot read {}", path.display()))?;
@@ -537,7 +542,7 @@ fn discover_json_mcp(
     home: &Path,
     entries: &mut BTreeMap<String, Entry>,
 ) -> Result<()> {
-    if !path.exists() {
+    if !path_exists(path)? {
         return Ok(());
     }
     let bytes = fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
@@ -562,7 +567,7 @@ fn discover_toml_mcp(
     home: &Path,
     entries: &mut BTreeMap<String, Entry>,
 ) -> Result<()> {
-    if !path.exists() {
+    if !path_exists(path)? {
         return Ok(());
     }
     let text =
@@ -672,8 +677,29 @@ fn add_path_entry(
     workspace: &Path,
     home: &Path,
 ) -> Result<()> {
+    let boundary = match scope {
+        EntryScope::User => home,
+        EntryScope::Workspace => workspace,
+    };
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("cannot resolve extension source {}", path.display()))?;
+    if !canonical.starts_with(boundary) {
+        bail!(
+            "{} extension source escapes its {} boundary: {}",
+            match scope {
+                EntryScope::User => "user",
+                EntryScope::Workspace => "workspace",
+            },
+            match scope {
+                EntryScope::User => "home",
+                EntryScope::Workspace => "workspace",
+            },
+            canonical.display()
+        );
+    }
     let hashed = hash_path(path)?;
-    let source = anchored_path(path, workspace, home, scope)?;
+    let source = anchored_path(&canonical, workspace, home, scope)?;
     let id = entry_id(ecosystem, kind, scope, &source);
     insert_entry(
         entries,
@@ -746,6 +772,43 @@ fn anchored(anchor: &str, relative: &Path) -> Result<String> {
 
 fn pointer_escape(value: &str) -> String {
     value.replace('~', "~0").replace('/', "~1")
+}
+
+fn path_exists(path: &Path) -> Result<bool> {
+    match fs::metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            match fs::symlink_metadata(path) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    bail!("broken discovery symlink {}", path.display())
+                }
+                Ok(_) => Ok(true),
+                Err(link_error) if link_error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                Err(link_error) => Err(link_error)
+                    .with_context(|| format!("cannot inspect discovery path {}", path.display())),
+            }
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("cannot inspect discovery path {}", path.display()))
+        }
+    }
+}
+
+fn skill_marker_exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(metadata.is_file() || metadata.file_type().is_symlink()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("cannot inspect skill marker {}", path.display()))
+        }
+    }
 }
 
 fn home_directory() -> Result<PathBuf> {
@@ -826,5 +889,25 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].source, "$HOME/.claude/skills/review");
         assert!(entries[0].id.ends_with(":$HOME/.claude/skills/review"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn user_extension_root_cannot_escape_the_home_boundary() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = tempdir().expect("tempdir");
+        let home = fixture.path().join("home");
+        let workspace = fixture.path().join("workspace");
+        let outside = fixture.path().join("outside-skill");
+        fs::create_dir_all(home.join(".claude/skills")).expect("user skill root");
+        fs::create_dir_all(&workspace).expect("workspace");
+        fs::create_dir_all(&outside).expect("outside skill");
+        fs::write(outside.join("SKILL.md"), "outside").expect("outside marker");
+        symlink(&outside, home.join(".claude/skills/escaped")).expect("escaped skill link");
+
+        let error = scan(&ScanOptions::new(workspace, home, ScanScope::User))
+            .expect_err("escaped user extension must fail");
+        assert!(error.to_string().contains("escapes its home boundary"));
     }
 }

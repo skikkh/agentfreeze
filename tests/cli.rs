@@ -150,6 +150,72 @@ fn unreadable_extension_fails_instead_of_producing_a_partial_lock() {
     assert!(String::from_utf8_lossy(&freeze.stderr).contains("cannot read"));
 }
 
+#[cfg(unix)]
+#[test]
+fn unreadable_discovery_parent_fails_instead_of_appearing_absent() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = tempdir().expect("tempdir");
+    let home = fixture.path().join("home");
+    let workspace = fixture.path().join("workspace");
+    let claude_root = home.join(".claude");
+    let skill = claude_root.join("skills/demo/SKILL.md");
+    let lockfile = fixture.path().join("agentfreeze.lock");
+    fs::create_dir_all(skill.parent().expect("skill parent")).expect("create skill");
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::write(&skill, "# Demo\n").expect("write skill");
+    fs::set_permissions(&claude_root, fs::Permissions::from_mode(0o000))
+        .expect("remove parent permission");
+
+    let freeze = Command::new(env!("CARGO_BIN_EXE_agentfreeze"))
+        .args([
+            "freeze",
+            "--home",
+            home.to_str().expect("home path"),
+            "--workspace",
+            workspace.to_str().expect("workspace path"),
+            "--output",
+            lockfile.to_str().expect("lockfile path"),
+        ])
+        .output()
+        .expect("run freeze");
+
+    fs::set_permissions(&claude_root, fs::Permissions::from_mode(0o700))
+        .expect("restore parent permission");
+    assert_eq!(freeze.status.code(), Some(2));
+    assert!(!lockfile.exists());
+    assert!(String::from_utf8_lossy(&freeze.stderr).contains("cannot inspect discovery path"));
+}
+
+#[test]
+fn malformed_plugin_manifest_fails_instead_of_using_fallback_metadata() {
+    let fixture = tempdir().expect("tempdir");
+    let home = fixture.path().join("home");
+    let workspace = fixture.path().join("workspace");
+    let manifest = home.join(".gemini/extensions/broken/gemini-extension.json");
+    let lockfile = fixture.path().join("agentfreeze.lock");
+    fs::create_dir_all(manifest.parent().expect("manifest parent")).expect("create extension");
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::write(&manifest, "{not-json").expect("write malformed manifest");
+
+    let freeze = Command::new(env!("CARGO_BIN_EXE_agentfreeze"))
+        .args([
+            "freeze",
+            "--home",
+            home.to_str().expect("home path"),
+            "--workspace",
+            workspace.to_str().expect("workspace path"),
+            "--output",
+            lockfile.to_str().expect("lockfile path"),
+        ])
+        .output()
+        .expect("run freeze");
+
+    assert_eq!(freeze.status.code(), Some(2));
+    assert!(!lockfile.exists());
+    assert!(String::from_utf8_lossy(&freeze.stderr).contains("invalid JSON in plugin manifest"));
+}
+
 fn verify(
     binary: &str,
     home: &std::path::Path,

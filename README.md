@@ -118,9 +118,11 @@ Microsoft APM for declared project or global package state.
 | VS Code | — | — | user and project |
 
 Paths are stored as `$HOME/...` or `$WORKSPACE/...`; raw MCP definitions are never written to the
-lockfile. Environment and header values, likely secret fields, CLI secret-flag values, and URL
-credentials/query values are redacted before the MCP definition is hashed. Unrecognized secrets
-outside those shapes may still exist, so review a lockfile before publishing it.
+lockfile. Likely secret fields—including secret-like environment, header, CLI-flag, and URL-query
+keys—plus URL credentials are redacted before hashing. Non-secret routing values such as tenant,
+region, and mode remain covered by drift detection. An unrecognized low-entropy secret can still
+influence the digest and may be vulnerable to offline guessing when the rest of its definition is
+known. Review extension names and source locations before publishing a lockfile.
 
 ## Drift is explicit
 

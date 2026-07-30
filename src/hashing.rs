@@ -246,8 +246,6 @@ fn sanitize_inner(
 
     match value {
         Value::Object(object) => {
-            let redact_children =
-                key.is_some_and(|name| is_header_container(name) || is_environment_container(name));
             let mut sanitized = Map::new();
             let mut keys = object.keys().collect::<Vec<_>>();
             keys.sort();
@@ -255,14 +253,7 @@ fn sanitize_inner(
                 let child = &object[child_key];
                 sanitized.insert(
                     child_key.clone(),
-                    sanitize_inner(
-                        child,
-                        Some(child_key),
-                        workspace,
-                        home,
-                        scope,
-                        redact_children,
-                    ),
+                    sanitize_inner(child, Some(child_key), workspace, home, scope, false),
                 );
             }
             Value::Object(sanitized)
@@ -391,8 +382,14 @@ fn redact_url(value: &str) -> String {
         let redacted = query
             .split('&')
             .map(|pair| {
-                let key = pair.split_once('=').map_or(pair, |(key, _)| key);
-                format!("{key}=<redacted>")
+                let Some((key, value)) = pair.split_once('=') else {
+                    return pair.to_owned();
+                };
+                if is_secret_key(key) {
+                    format!("{key}=<redacted>")
+                } else {
+                    format!("{key}={value}")
+                }
             })
             .collect::<Vec<_>>()
             .join("&");
@@ -403,20 +400,6 @@ fn redact_url(value: &str) -> String {
         sanitized_base.push_str("#<redacted>");
     }
     sanitized_base
-}
-
-fn is_header_container(key: &str) -> bool {
-    matches!(
-        normalize_key(key).as_str(),
-        "header" | "headers" | "http_header" | "http_headers"
-    )
-}
-
-fn is_environment_container(key: &str) -> bool {
-    matches!(
-        normalize_key(key).as_str(),
-        "env" | "environment" | "environment_variables"
-    )
 }
 
 fn is_url_key(key: &str) -> bool {
@@ -436,17 +419,27 @@ fn is_secret_key(key: &str) -> bool {
         key.as_str(),
         "api_key"
             | "apikey"
+            | "auth"
             | "authorization"
             | "bearer"
             | "cookie"
             | "credential"
             | "credentials"
+            | "passphrase"
             | "password"
+            | "pat"
             | "private_key"
             | "privatekey"
             | "secret"
+            | "session"
             | "token"
     ) || key.ends_with("_key")
+        || key.ends_with("_auth")
+        || key.ends_with("_authorization")
+        || key.ends_with("_bearer")
+        || key.ends_with("_cookie")
+        || key.ends_with("_credential")
+        || key.ends_with("_credentials")
         || key.ends_with("_apikey")
         || key.ends_with("_api_key")
         || key.ends_with("_access_key")
@@ -454,7 +447,10 @@ fn is_secret_key(key: &str) -> bool {
         || key.ends_with("_private_key")
         || key.ends_with("_privatekey")
         || key.ends_with("_password")
+        || key.ends_with("_passphrase")
+        || key.ends_with("_pat")
         || key.ends_with("_secret")
+        || key.ends_with("_session")
         || key.ends_with("_token")
 }
 
@@ -480,7 +476,7 @@ mod tests {
     use serde_json::json;
     use tempfile::tempdir;
 
-    use super::{hash_path, redact_url, sanitize_mcp_value};
+    use super::{hash_json_value, hash_path, redact_url, sanitize_mcp_value};
     use crate::model::EntryScope;
 
     #[test]
@@ -547,16 +543,18 @@ mod tests {
                 "--token",
                 "secret-value",
                 "--mode=safe",
-                "https://arg-user:arg-password@example.test/run?token=arg-secret"
+                "https://arg-user:arg-password@example.test/run?token=arg-secret&tenant=account-a"
             ],
-            "url": "https://example.test/mcp?key=secret&mode=safe",
+            "url": "https://example.test/mcp?api_key=secret&mode=safe",
             "database_url": "postgres://db-user:db-password@example.test/database",
             "env": {
                 "API_KEY": "secret-value",
-                "MODE": "safe"
+                "MODE": "safe",
+                "TENANT_ID": "account-a"
             },
             "headers": {
-                "X-Custom": "secret-value"
+                "Authorization": "secret-value",
+                "X-Tenant-ID": "account-a"
             }
         });
         let sanitized = sanitize_mcp_value(
@@ -571,8 +569,45 @@ mod tests {
         assert!(!text.contains("arg-secret"), "{text}");
         assert!(!text.contains("db-password"), "{text}");
         assert!(text.contains("$WORKSPACE/bin/server"));
-        assert!(text.contains("\"MODE\":\"<redacted>\""));
-        assert!(text.contains("key=<redacted>&mode=<redacted>"));
+        assert!(text.contains("\"MODE\":\"safe\""));
+        assert!(text.contains("\"TENANT_ID\":\"account-a\""));
+        assert!(text.contains("\"X-Tenant-ID\":\"account-a\""));
+        assert!(text.contains("api_key=<redacted>&mode=safe"));
+        assert!(text.contains("token=<redacted>&tenant=account-a"));
         assert!(text.contains("postgres://<redacted>@example.test/database"));
+    }
+
+    #[test]
+    fn mcp_digest_detects_non_secret_tenant_changes_but_ignores_secret_rotation() {
+        let first = json!({
+            "url": "https://example.test/mcp?tenant=account-a&token=secret-a",
+            "env": {"TENANT_ID": "account-a", "API_KEY": "secret-a"},
+            "headers": {"X-Tenant-ID": "account-a", "Authorization": "secret-a"}
+        });
+        let rotated_secret = json!({
+            "url": "https://example.test/mcp?tenant=account-a&token=secret-b",
+            "env": {"TENANT_ID": "account-a", "API_KEY": "secret-b"},
+            "headers": {"X-Tenant-ID": "account-a", "Authorization": "secret-b"}
+        });
+        let changed_tenant = json!({
+            "url": "https://example.test/mcp?tenant=account-b&token=secret-b",
+            "env": {"TENANT_ID": "account-b", "API_KEY": "secret-b"},
+            "headers": {"X-Tenant-ID": "account-b", "Authorization": "secret-b"}
+        });
+        let workspace = std::path::Path::new("/workspace");
+        let home = std::path::Path::new("/home/example");
+        let digest = |value: &serde_json::Value| {
+            hash_json_value(&sanitize_mcp_value(
+                value,
+                workspace,
+                home,
+                EntryScope::User,
+            ))
+            .expect("hash sanitized value")
+            .digest
+        };
+
+        assert_eq!(digest(&first), digest(&rotated_secret));
+        assert_ne!(digest(&first), digest(&changed_tenant));
     }
 }

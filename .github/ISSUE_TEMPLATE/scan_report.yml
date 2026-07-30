@@ -1,0 +1,72 @@
+name: Voluntary scan report
+description: Share a redacted successful scan or a real drift event without telemetry.
+title: "[scan] "
+labels: ["scan-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        AgentFreeze does not collect telemetry. This public form is the opt-in way to report whether
+        discovery worked. Do not paste configuration, credentials, usernames, absolute paths, or
+        private repository names.
+  - type: input
+    id: version
+    attributes:
+      label: AgentFreeze version
+      placeholder: "agentfreeze 0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: hosts
+    attributes:
+      label: Hosts present on this machine
+      description: Select every host for which AgentFreeze found at least one entry.
+      options:
+        - label: Claude
+        - label: Codex
+        - label: Cursor
+        - label: Gemini
+        - label: VS Code
+        - label: Shared `.agents`
+    validations:
+      required: true
+  - type: input
+    id: summary
+    attributes:
+      label: Redacted scan summary
+      description: 'Paste only the count line, for example “Found 12 extensions: 5 skills, 2 plugins, 5 MCP servers.”'
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Successful baseline; no previously unnoticed drift yet
+        - Found a real, previously unnoticed change
+        - Discovery missed or misclassified an entry
+    validations:
+      required: true
+  - type: textarea
+    id: drift
+    attributes:
+      label: Optional drift or discovery details
+      description: Use anchored paths such as `$HOME/...`; include the item type and action taken, but no private data.
+  - type: checkboxes
+    id: disclosure
+    attributes:
+      label: Public-data check
+      options:
+        - label: I reviewed this report and it contains no secrets, usernames, absolute home paths, or private project names.
+          required: true

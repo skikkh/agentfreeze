@@ -61,7 +61,17 @@ else
 fi
 
 temporary_directory="$(mktemp -d)"
-trap 'rm -rf "$temporary_directory"' EXIT HUP INT TERM
+staging_binary=""
+cleanup() {
+  rm -rf "$temporary_directory"
+  if [ -n "$staging_binary" ]; then
+    rm -f "$staging_binary"
+  fi
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 curl --proto '=https' --tlsv1.2 -fLsS \
   "${base_url}/${archive}" \
@@ -103,7 +113,14 @@ fi
 
 tar -xzf "${temporary_directory}/${archive}" -C "$temporary_directory"
 mkdir -p "$binary_directory"
-install -m 0755 "${temporary_directory}/agentfreeze" "${binary_directory}/agentfreeze"
+if [ -d "${binary_directory}/agentfreeze" ]; then
+  echo "error: ${binary_directory}/agentfreeze is a directory" >&2
+  exit 2
+fi
+staging_binary="$(mktemp "${binary_directory}/.agentfreeze.XXXXXX")"
+install -m 0755 "${temporary_directory}/agentfreeze" "$staging_binary"
+mv -f "$staging_binary" "${binary_directory}/agentfreeze"
+staging_binary=""
 
 echo "Installed agentfreeze to ${binary_directory}/agentfreeze"
 case ":${PATH}:" in
