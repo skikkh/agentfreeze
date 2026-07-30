@@ -7,7 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-07-30
+## [0.1.0] - 2026-07-31
 
 ### Added
 
@@ -17,8 +17,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - MCP discovery for Claude, Codex, Cursor, Gemini, VS Code, and generic project config.
 - Deterministic `agentfreeze.lock` v1 with anchored paths and secret-aware MCP hashing.
 - `scan`, `freeze`, `verify`, and polling `watch` commands with JSON output and stable exit codes.
-- Fail-closed handling for unreadable sources, malformed configs, and symlinked extension roots.
-- Semantic type validation for known MCP containers and server definitions.
+- Fail-closed handling for unreadable sources, non-regular discovery files, malformed configs, and
+  symlinked extension roots.
+- Semantic type validation for known MCP containers, server definitions, plugin manifests, and
+  plugin registries.
 - Canonical boundary enforcement for known MCP configs, plugin registries, and plugin discovery
   aliases.
 - Fail-closed validation of broken or boundary-escaping parent links on known discovery paths.

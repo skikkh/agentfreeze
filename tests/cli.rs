@@ -216,6 +216,117 @@ fn malformed_plugin_manifest_fails_instead_of_using_fallback_metadata() {
     assert!(String::from_utf8_lossy(&freeze.stderr).contains("invalid JSON in plugin manifest"));
 }
 
+#[test]
+fn semantically_invalid_plugin_metadata_fails_closed() {
+    let cases = [
+        ("root-array", "[]"),
+        ("name-number", r#"{"name":1}"#),
+        ("version-number", r#"{"name":"broken","version":1}"#),
+    ];
+
+    for (case_name, content) in cases {
+        let fixture = tempdir().expect("tempdir");
+        let home = fixture.path().join("home");
+        let workspace = fixture.path().join("workspace");
+        let manifest = home.join(".gemini/extensions/broken/gemini-extension.json");
+        fs::create_dir_all(manifest.parent().expect("manifest parent")).expect("create extension");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        fs::write(&manifest, content).expect("write manifest");
+
+        let scan = scan_scope(&home, &workspace, "user");
+        assert_eq!(
+            scan.status.code(),
+            Some(2),
+            "case {case_name}: {}",
+            String::from_utf8_lossy(&scan.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&scan.stderr).contains("must be"),
+            "case {case_name}: {}",
+            String::from_utf8_lossy(&scan.stderr)
+        );
+    }
+}
+
+#[test]
+fn semantically_invalid_claude_registry_metadata_fails_closed() {
+    let cases = [
+        ("empty-records", r#"{"plugins":{"broken":[]}}"#),
+        (
+            "version-number",
+            r#"{"plugins":{"broken":{"installPath":"INSTALL_PATH","version":1}}}"#,
+        ),
+        (
+            "revision-number",
+            r#"{"plugins":{"broken":{"installPath":"INSTALL_PATH","gitCommitSha":1}}}"#,
+        ),
+    ];
+
+    for (case_name, template) in cases {
+        let fixture = tempdir().expect("tempdir");
+        let home = fixture.path().join("home");
+        let workspace = fixture.path().join("workspace");
+        let registry = home.join(".claude/plugins/installed_plugins.json");
+        let install = home.join(".claude/plugins/cache/broken");
+        fs::create_dir_all(registry.parent().expect("registry parent")).expect("registry parent");
+        fs::create_dir_all(&install).expect("plugin install");
+        fs::create_dir_all(&workspace).expect("workspace");
+        let content = template.replace("INSTALL_PATH", &install.to_string_lossy());
+        fs::write(&registry, content).expect("write registry");
+
+        let scan = scan_scope(&home, &workspace, "user");
+        assert_eq!(
+            scan.status.code(),
+            Some(2),
+            "case {case_name}: {}",
+            String::from_utf8_lossy(&scan.stderr)
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn special_discovery_files_fail_before_they_can_block_reads() {
+    let cases = [
+        (".claude.json", "MCP JSON config"),
+        (
+            ".claude/plugins/installed_plugins.json",
+            "Claude plugin registry",
+        ),
+        (
+            ".gemini/extensions/broken/gemini-extension.json",
+            "unsupported plugin discovery entry",
+        ),
+    ];
+
+    for (relative, expected_error) in cases {
+        let fixture = tempdir().expect("tempdir");
+        let home = fixture.path().join("home");
+        let workspace = fixture.path().join("workspace");
+        let special = home.join(relative);
+        fs::create_dir_all(special.parent().expect("special parent")).expect("special parent");
+        fs::create_dir_all(&workspace).expect("workspace");
+        let status = Command::new("mkfifo")
+            .arg(&special)
+            .status()
+            .expect("create FIFO");
+        assert!(status.success(), "mkfifo {relative}");
+
+        let scan = scan_scope(&home, &workspace, "user");
+        assert_eq!(
+            scan.status.code(),
+            Some(2),
+            "case {relative}: {}",
+            String::from_utf8_lossy(&scan.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&scan.stderr).contains(expected_error),
+            "case {relative}: {}",
+            String::from_utf8_lossy(&scan.stderr)
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn plugin_symlink_escapes_fail_closed_across_supported_roots() {

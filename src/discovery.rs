@@ -399,6 +399,8 @@ fn find_plugin_manifests(
                     visited,
                     active,
                 )?;
+            } else if !metadata.is_file() {
+                bail!("unsupported plugin discovery entry: {}", path.display());
             }
         }
         Ok(())
@@ -429,19 +431,31 @@ fn manifest_identity(manifest: &Path, plugin_root: &Path) -> Result<(String, Opt
         .and_then(|name| name.to_str())
         .unwrap_or("plugin")
         .to_owned();
-    let bytes = fs::read(manifest)
-        .with_context(|| format!("cannot read plugin manifest {}", manifest.display()))?;
+    let bytes = read_discovery_file(manifest, plugin_root, "plugin manifest")?;
     let value = serde_json::from_slice::<Value>(&bytes)
         .with_context(|| format!("invalid JSON in plugin manifest {}", manifest.display()))?;
-    let name = value
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or(&fallback)
-        .to_owned();
-    let version = value
-        .get("version")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
+    let object = value.as_object().with_context(|| {
+        format!(
+            "plugin manifest {} must be a JSON object",
+            manifest.display()
+        )
+    })?;
+    let name = match object.get("name") {
+        None => fallback,
+        Some(Value::String(name)) => name.clone(),
+        Some(_) => bail!(
+            "name in plugin manifest {} must be a string",
+            manifest.display()
+        ),
+    };
+    let version = match object.get("version") {
+        None => None,
+        Some(Value::String(version)) => Some(version.clone()),
+        Some(_) => bail!(
+            "version in plugin manifest {} must be a string",
+            manifest.display()
+        ),
+    };
     Ok((name, version))
 }
 
@@ -454,9 +468,7 @@ fn discover_claude_installed_plugins(
     if !path_exists(&registry, home, "Claude plugin registry")? {
         return Ok(());
     }
-    let resolved_registry = resolve_within_boundary(&registry, home, "Claude plugin registry")?;
-    let bytes = fs::read(&resolved_registry)
-        .with_context(|| format!("cannot read Claude plugin registry {}", registry.display()))?;
+    let bytes = read_discovery_file(&registry, home, "Claude plugin registry")?;
     let value: Value = serde_json::from_slice(&bytes)
         .with_context(|| format!("invalid JSON in {}", registry.display()))?;
     let Some(plugins) = value.get("plugins").and_then(Value::as_object) else {
@@ -471,6 +483,9 @@ fn discover_claude_installed_plugins(
             record @ Value::Object(_) => vec![record],
             _ => bail!("invalid install record for Claude plugin {plugin_id}"),
         };
+        if records.is_empty() {
+            bail!("Claude plugin {plugin_id} has no install records");
+        }
         for record in records {
             let Some(install_path) = record.get("installPath").and_then(Value::as_str) else {
                 bail!("Claude plugin {plugin_id} has no installPath");
@@ -494,14 +509,18 @@ fn discover_claude_installed_plugins(
                     canonical_install_path.display()
                 );
             }
-            let version = record
-                .get("version")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            let revision = record
-                .get("gitCommitSha")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
+            let version = match record.get("version") {
+                None => None,
+                Some(Value::String(version)) => Some(version.clone()),
+                Some(_) => bail!("version for Claude plugin {plugin_id} must be a string"),
+            };
+            let revision = match record.get("gitCommitSha") {
+                None => None,
+                Some(Value::String(revision)) => Some(revision.clone()),
+                Some(_) => {
+                    bail!("gitCommitSha for Claude plugin {plugin_id} must be a string")
+                }
+            };
             add_path_entry(
                 entries,
                 Ecosystem::Claude,
@@ -637,8 +656,7 @@ fn discover_claude_project_mcp(
     if !path_exists(&path, home, "Claude project MCP config")? {
         return Ok(());
     }
-    let resolved = resolve_within_boundary(&path, home, "Claude project MCP config")?;
-    let bytes = fs::read(&resolved).with_context(|| format!("cannot read {}", path.display()))?;
+    let bytes = read_discovery_file(&path, home, "Claude project MCP config")?;
     let value: Value = serde_json::from_slice(&bytes)
         .with_context(|| format!("invalid JSON in {}", path.display()))?;
     let root = value
@@ -699,8 +717,7 @@ fn discover_json_mcp(
     if !path_exists(path, boundary, "MCP JSON config")? {
         return Ok(());
     }
-    let resolved = resolve_within_boundary(path, boundary, "MCP JSON config")?;
-    let bytes = fs::read(&resolved).with_context(|| format!("cannot read {}", path.display()))?;
+    let bytes = read_discovery_file(path, boundary, "MCP JSON config")?;
     let value: Value = serde_json::from_slice(&bytes)
         .with_context(|| format!("invalid JSON in {}", path.display()))?;
     let root = value
@@ -738,9 +755,9 @@ fn discover_toml_mcp(
     if !path_exists(path, boundary, "MCP TOML config")? {
         return Ok(());
     }
-    let resolved = resolve_within_boundary(path, boundary, "MCP TOML config")?;
-    let text =
-        fs::read_to_string(&resolved).with_context(|| format!("cannot read {}", path.display()))?;
+    let bytes = read_discovery_file(path, boundary, "MCP TOML config")?;
+    let text = String::from_utf8(bytes)
+        .with_context(|| format!("MCP TOML config {} is not UTF-8", path.display()))?;
     let value: toml::Value =
         toml::from_str(&text).with_context(|| format!("invalid TOML in {}", path.display()))?;
     let Some(servers_value) = value.get("mcp_servers") else {
@@ -1025,6 +1042,16 @@ fn resolve_within_boundary(path: &Path, boundary: &Path, label: &str) -> Result<
         );
     }
     Ok(resolved)
+}
+
+fn read_discovery_file(path: &Path, boundary: &Path, label: &str) -> Result<Vec<u8>> {
+    let resolved = resolve_within_boundary(path, boundary, label)?;
+    let metadata = fs::metadata(&resolved)
+        .with_context(|| format!("cannot inspect {label} {}", path.display()))?;
+    if !metadata.is_file() {
+        bail!("{label} must be a regular file: {}", path.display());
+    }
+    fs::read(&resolved).with_context(|| format!("cannot read {label} {}", path.display()))
 }
 
 fn skill_marker_exists(path: &Path, boundary: &Path) -> Result<bool> {
