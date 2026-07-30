@@ -5,6 +5,7 @@ Conversation history is not authoritative.
 
 | Status | Artifact | Owner | Updated |
 |---|---|---|---|
+| current | [v0.1.0 release proof](releases/2026-07-31-v0.1.0.md) | skikkh | 2026-07-31 |
 | current | [Scope and release decision](decisions/2026-07-30-agentfreeze-scope-and-release.md) | skikkh | 2026-07-31 |
 | current | [Market and competition evidence](research/2026-07-30-market-and-competition.md) | skikkh | 2026-07-30 |
 

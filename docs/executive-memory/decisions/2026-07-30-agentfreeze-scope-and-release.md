@@ -169,3 +169,14 @@ One bounded residual risk is accepted only through 2026-08-13: v0.1 has no expli
 file-count, or tree-depth limits for otherwise valid local extension trees. The impact is local
 time or memory exhaustion; the README must disclose it, and the two-week review must decide
 explicit limits or continued risk acceptance.
+
+## Release outcome — 2026-07-31
+
+The hold above was cleared for exact commit
+`7b97cf221ebcd39d88022e55a5bba8bb14ac4bcf` after every listed gate passed. GitHub published
+`v0.1.0` as an immutable release with exactly six verified assets, and a clean verified installation
+completed `scan`, `freeze`, and `verify`. See the
+[v0.1.0 release proof](../releases/2026-07-31-v0.1.0.md).
+
+This does not change the market decision: adoption, standardization, buyer interest, and paid demand
+remain unvalidated until the external gates above are observed.
