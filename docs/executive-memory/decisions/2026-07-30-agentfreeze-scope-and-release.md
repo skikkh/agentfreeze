@@ -136,3 +136,36 @@ fixtures upstream. If gate 4 fails, stop the standards bid even if individual us
   path or common secret pattern.
 
 The `79` result is one observed machine, not a population estimate.
+
+## Release safety gate update — 2026-07-31
+
+The first fresh release review examined commit
+`87eaa329fbda9eb563f09ebee8e92858883f7b2a` and kept public announcement and binary publication on
+hold. Four release blockers were identified:
+
+1. the default README executed the installer before verifying the installer itself;
+2. binary archives omitted third-party dependency license texts;
+3. the release workflow accepted whichever commit was current `main`, rather than an explicitly
+   reviewed commit;
+4. every documented install URL was necessarily unavailable before a tag and release existed.
+
+The replacement release contract is:
+
+- download the fixed-version installer, bind its attestation to the repository, workflow, tag, and
+  exact commit, and only then execute it;
+- generate `THIRD_PARTY_LICENSES.html` reproducibly from `Cargo.lock`, fail CI on drift, and include
+  it in every binary archive;
+- require the external repository variable `RELEASE_APPROVED_SHA` to equal the exact independently
+  reviewed commit;
+- publish no announcement until tag dereference, immutable release assets, attestations, and a
+  clean temporary install are read back successfully.
+
+After source visibility changes, the repository must immediately enable protected `main` and `v*`
+tag rules plus private vulnerability reporting. The release remains `PRODUCTION_HOLD` until the
+public GitHub settings, workflow run, attestations, release assets, install smoke test, schema-v2
+audit matrix, and a new exact-SHA independent review all pass.
+
+One bounded residual risk is accepted only through 2026-08-13: v0.1 has no explicit byte,
+file-count, or tree-depth limits for otherwise valid local extension trees. The impact is local
+time or memory exhaustion; the README must disclose it, and the two-week review must decide
+explicit limits or continued risk acceptance.

@@ -23,6 +23,10 @@ jobs:
         run: cargo +1.85.0 clippy --all-targets -- -D warnings
       - name: Test
         run: cargo +1.85.0 test --all-targets --locked
+      - name: Verify third-party license notice
+        run: |
+          bash scripts/generate-third-party-licenses.sh
+          git diff --exit-code -- THIRD_PARTY_LICENSES.html
 
   platform-tests:
     name: Test on ${{ matrix.os }}

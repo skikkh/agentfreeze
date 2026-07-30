@@ -12,6 +12,8 @@ The roadmap is ordered by proof, not by feature count. No phase after v0.1 is co
 - bounded-interval polling monitor
 - signed release provenance and checksums
 - no extension code or MCP server execution during inventory
+- document the local resource-exhaustion boundary; decide explicit byte, file-count, and tree-depth
+  limits by the 2026-08-13 review
 
 Two-week success gate, due 2026-08-13 with no extension:
 

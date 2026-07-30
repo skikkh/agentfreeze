@@ -55,8 +55,21 @@ narrower, testable question:
 macOS and Linux (requires GitHub CLI with `gh attestation verify`):
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/skikkh/agentfreeze/releases/latest/download/install.sh | sh
+version=v0.1.0
+curl --proto '=https' --tlsv1.2 -fLsS \
+  "https://github.com/skikkh/agentfreeze/releases/download/${version}/install.sh" \
+  -o agentfreeze-install.sh
+release_sha="$(git ls-remote https://github.com/skikkh/agentfreeze \
+  "refs/tags/${version}^{}" | cut -f1)"
+test "${#release_sha}" -eq 40
+gh attestation verify agentfreeze-install.sh \
+  --repo skikkh/agentfreeze \
+  --signer-workflow github.com/skikkh/agentfreeze/.github/workflows/release.yml \
+  --signer-digest "$release_sha" \
+  --source-ref "refs/tags/${version}" \
+  --source-digest "$release_sha" \
+  --deny-self-hosted-runners
+sh agentfreeze-install.sh --version "$version"
 ```
 
 From source:
@@ -68,35 +81,31 @@ cargo install --git https://github.com/skikkh/agentfreeze --tag v0.1.0 --locked
 Windows users can download the `.zip` from
 [GitHub Releases](https://github.com/skikkh/agentfreeze/releases).
 
-Release binaries include SHA-256 checksums and GitHub build-provenance attestations. By default,
-the installer requires GitHub CLI (`gh`) and binds verification to this repository, the release
-workflow, the resolved tag and commit, and GitHub-hosted runners. To explicitly accept only the
-same-origin release checksum when `gh` is unavailable:
+Release binaries include SHA-256 checksums and GitHub build-provenance attestations. The default
+path verifies the installer before executing it, then the installer verifies the selected binary
+against this repository, release workflow, resolved tag and commit, and GitHub-hosted runners.
+To explicitly accept only same-origin release checksums when `gh` is unavailable:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/skikkh/agentfreeze/releases/latest/download/install.sh |
-  sh -s -- --allow-checksum-only
-```
-
-To verify the v0.1.0 installer before running it:
-
-```sh
+version=v0.1.0
 curl --proto '=https' --tlsv1.2 -fLsS \
-  https://github.com/skikkh/agentfreeze/releases/download/v0.1.0/install.sh \
-  -o install.sh
-release_sha="$(git ls-remote https://github.com/skikkh/agentfreeze \
-  'refs/tags/v0.1.0^{}' | cut -f1)"
-test "${#release_sha}" -eq 40
-gh attestation verify install.sh \
-  --repo skikkh/agentfreeze \
-  --signer-workflow github.com/skikkh/agentfreeze/.github/workflows/release.yml \
-  --signer-digest "$release_sha" \
-  --source-ref refs/tags/v0.1.0 \
-  --source-digest "$release_sha" \
-  --deny-self-hosted-runners
-sh install.sh
+  "https://github.com/skikkh/agentfreeze/releases/download/${version}/install.sh" \
+  -o agentfreeze-install.sh
+curl --proto '=https' --tlsv1.2 -fLsS \
+  "https://github.com/skikkh/agentfreeze/releases/download/${version}/SHA256SUMS" \
+  -o SHA256SUMS
+grep '  install.sh$' SHA256SUMS |
+  sed 's/  install.sh$/  agentfreeze-install.sh/' > INSTALLER_CHECKSUM
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum -c INSTALLER_CHECKSUM
+else
+  shasum -a 256 -c INSTALLER_CHECKSUM
+fi
+sh agentfreeze-install.sh --version "$version" --allow-checksum-only
 ```
+
+Binary archives include the project MIT license and generated third-party dependency license
+texts in `THIRD_PARTY_LICENSES.html`.
 
 ## Quick start
 
@@ -198,6 +207,10 @@ AgentFreeze v1 refuses workspace entries in its lockfile. See the
 AgentFreeze cannot protect a lockfile an attacker can also modify, judge first-install safety,
 observe runtime behavior, or prevent a time-of-check/time-of-use race. Read the
 [threat model](docs/threat-model.md) before using it as a security gate.
+
+`v0.1` also has no explicit byte, file-count, or tree-depth resource limits for otherwise valid
+extension content. Scan only local extension roots you control; a very large or adversarial tree
+can exhaust local time or memory. Bounded resource handling is tracked for the 2026-08-13 review.
 
 ## Status
 

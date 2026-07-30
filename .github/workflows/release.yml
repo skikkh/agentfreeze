@@ -24,6 +24,20 @@ jobs:
           fetch-depth: 0
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.85.0 --profile minimal --component clippy,rustfmt
+      - name: Require the independently reviewed release commit
+        env:
+          APPROVED_SHA: ${{ vars.RELEASE_APPROVED_SHA }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "${APPROVED_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "RELEASE_APPROVED_SHA is missing or malformed" >&2
+            exit 2
+          fi
+          if [ "${GITHUB_SHA}" != "${APPROVED_SHA}" ]; then
+            echo "release commit ${GITHUB_SHA} is not independently approved ${APPROVED_SHA}" >&2
+            exit 2
+          fi
       - name: Bind release tags to the package version and current main
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
@@ -49,6 +63,10 @@ jobs:
         run: cargo +1.85.0 clippy --all-targets -- -D warnings
       - name: Test
         run: cargo +1.85.0 test --all-targets --locked
+      - name: Verify third-party license notice
+        run: |
+          bash scripts/generate-third-party-licenses.sh
+          git diff --exit-code -- THIRD_PARTY_LICENSES.html
       - name: Audit dependencies
         run: bash scripts/run-cargo-audit.sh
 
@@ -100,7 +118,7 @@ jobs:
         run: |
           mkdir -p dist/package
           cp "target/${{ matrix.target }}/release/${{ matrix.executable }}" dist/package/agentfreeze
-          cp LICENSE README.md dist/package/
+          cp LICENSE README.md THIRD_PARTY_LICENSES.html dist/package/
           tar -C dist/package -czf "dist/agentfreeze-${{ matrix.asset }}.tar.gz" .
           rm -rf dist/package
       - name: Package Windows binary
@@ -109,7 +127,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path dist/package | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.executable }}" dist/package/
-          Copy-Item LICENSE,README.md dist/package/
+          Copy-Item LICENSE,README.md,THIRD_PARTY_LICENSES.html dist/package/
           Compress-Archive -Path dist/package/* -DestinationPath "dist/agentfreeze-${{ matrix.asset }}.zip"
           Remove-Item -Recurse -Force dist/package
       - name: Attest build provenance

@@ -29,8 +29,21 @@ Watching 79 user extensions every 60s — Ctrl-C to stop
 GitHub CLIの`gh attestation verify`を利用できるmacOS / Linux:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/skikkh/agentfreeze/releases/latest/download/install.sh | sh
+version=v0.1.0
+curl --proto '=https' --tlsv1.2 -fLsS \
+  "https://github.com/skikkh/agentfreeze/releases/download/${version}/install.sh" \
+  -o agentfreeze-install.sh
+release_sha="$(git ls-remote https://github.com/skikkh/agentfreeze \
+  "refs/tags/${version}^{}" | cut -f1)"
+test "${#release_sha}" -eq 40
+gh attestation verify agentfreeze-install.sh \
+  --repo skikkh/agentfreeze \
+  --signer-workflow github.com/skikkh/agentfreeze/.github/workflows/release.yml \
+  --signer-digest "$release_sha" \
+  --source-ref "refs/tags/${version}" \
+  --source-digest "$release_sha" \
+  --deny-self-hosted-runners
+sh agentfreeze-install.sh --version "$version"
 
 agentfreeze scan
 agentfreeze freeze
@@ -42,6 +55,9 @@ installerはSHA-256を必ず確認し、既定ではGitHub CLIを使ってreposi
 tag・commit・GitHub-hosted runnerまで拘束したbuild provenance検証も必須にします。
 `gh`なしでsame-origin checksumだけを明示的に受容する手順とinstaller自体の検証手順は
 [English README](README.md#install)にあります。
+
+バイナリアーカイブには本体のMITライセンスと、依存crateのライセンステキストを生成した
+`THIRD_PARTY_LICENSES.html`を同梱します。
 
 `freeze`は対応済みのユーザー領域だけを固定します。現在のリポジトリは
 `agentfreeze scan --scope workspace`でinventoryできますが、project-localな認可にはSeal、
@@ -60,6 +76,10 @@ AgentFreezeは「安全判定スキャナ」ではありません。「今ある
 - 拡張内容のhashではsymlink先を辿らずリンク文字列をhash。manifest探索だけはroot内の
   directory aliasを深さ制限付きで解決し、循環・上限超過・境界外なら失敗
 - `verify`はclean=0、drift=1、実行エラー=2
+
+`v0.1`には、正しい形式の拡張内容に対するbyte数・file数・tree深さの明示的なresource
+上限がまだありません。管理下のlocal rootだけをscanしてください。巨大または敵対的な
+treeはlocalの時間・memoryを使い切る可能性があり、2026-08-13の見直し項目です。
 
 lockfileも変更できる攻撃者、初回導入時から悪性の拡張、実行時だけ変わる挙動は防げません。
 秘密として認識された値だけの変更もv0.1の検知外です。
