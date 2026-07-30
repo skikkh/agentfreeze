@@ -26,13 +26,16 @@ Watching 79 user extensions every 60s — Ctrl-C to stop
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://raw.githubusercontent.com/skikkh/agentfreeze/main/install.sh | sh
+  https://github.com/skikkh/agentfreeze/releases/latest/download/install.sh | sh
 
 agentfreeze scan
 agentfreeze freeze
 agentfreeze verify
 agentfreeze watch
 ```
+
+installerはSHA-256を必ず確認し、対応するGitHub CLIがあればbuild provenanceも確認します。
+installer自体の検証手順は[English README](README.md#install)にあります。
 
 `freeze`は対応済みのユーザー領域だけを固定します。現在のリポジトリは
 `agentfreeze scan --scope workspace`でinventoryできますが、project-localな認可にはSeal、

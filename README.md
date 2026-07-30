@@ -55,7 +55,7 @@ macOS and Linux:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://raw.githubusercontent.com/skikkh/agentfreeze/main/install.sh | sh
+  https://github.com/skikkh/agentfreeze/releases/latest/download/install.sh | sh
 ```
 
 From source:
@@ -67,7 +67,17 @@ cargo install --git https://github.com/skikkh/agentfreeze --locked
 Windows users can download the `.zip` from
 [GitHub Releases](https://github.com/skikkh/agentfreeze/releases).
 
-Release binaries include SHA-256 checksums and GitHub build-provenance attestations.
+Release binaries include SHA-256 checksums and GitHub build-provenance attestations. The installer
+also verifies the binary attestation when GitHub CLI (`gh`) is available; otherwise it prints a
+warning and verifies the release checksum only. To verify the installer before running it:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fLsS \
+  https://github.com/skikkh/agentfreeze/releases/latest/download/install.sh \
+  -o install.sh
+gh attestation verify install.sh --repo skikkh/agentfreeze
+sh install.sh
+```
 
 ## Quick start
 

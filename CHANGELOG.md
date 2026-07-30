@@ -20,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Fail-closed handling for unreadable sources, malformed configs, and symlinked extension roots.
 - Non-following hashes for internal symlink targets and complete coverage of hidden files.
 - CI, release checksums, and build-provenance attestation workflow.
+- Installer-side build-provenance verification when GitHub CLI is available.
 
 [Unreleased]: https://github.com/skikkh/agentfreeze/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/skikkh/agentfreeze/releases/tag/v0.1.0

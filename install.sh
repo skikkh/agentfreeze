@@ -92,6 +92,15 @@ else
   exit 2
 fi
 
+if command -v gh >/dev/null 2>&1 && gh attestation verify --help >/dev/null 2>&1; then
+  gh attestation verify \
+    "${temporary_directory}/${archive}" \
+    --repo "$repository" >/dev/null
+  echo "Verified GitHub build provenance for ${archive}"
+else
+  echo "warning: gh attestation verification is unavailable; verified checksum only" >&2
+fi
+
 tar -xzf "${temporary_directory}/${archive}" -C "$temporary_directory"
 mkdir -p "$binary_directory"
 install -m 0755 "${temporary_directory}/agentfreeze" "${binary_directory}/agentfreeze"
